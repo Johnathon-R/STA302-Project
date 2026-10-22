@@ -28,3 +28,12 @@
 | Pros Not to many attributes Simpler data set | Cons May not be of interest if we are super set on finance stuff Smaller data set Not all unique observations (it was bootstraped) |
 | :---- | :---- |
 
+[AI Usage and Impact on Students & Professionals \- AI](https://www.kaggle.com/datasets/eishatuzzuhra/ai-usage-and-impact-on-students-and-professionals/data)
+
+| Pros AI economic study would be interesting and compelling to present | Cons Not very clean (would need some sort of data engineering to identify words into numbers) |
+| :---- | :---- |
+
+[AI Impact on Student Life Dataset \- AI](https://www.kaggle.com/datasets/eishatuzzuhra/ai-usage-and-impact-on-students-and-professionals/data)
+
+| Pros same as above and cleaner | Cons Still requires a bit of engineering and the predictors are quite plain (could use interactions) also its not in north america its in india |
+| :---- | :---- |
