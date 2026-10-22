@@ -32,8 +32,3 @@ https://www.kaggle.com/datasets/aliaslam25/stack-overflow-developer-survey-2025
 
 | Pros big dataset | Cons May require a bit of engineering |
 | :---- | :---- |
-
-[AI Impact on Student Life Dataset \- AI](https://www.kaggle.com/datasets/eishatuzzuhra/ai-usage-and-impact-on-students-and-professionals/data)
-
-| Pros same as above | Cons Still requires a bit of engineering and is synthetic |
-| :---- | :---- |
