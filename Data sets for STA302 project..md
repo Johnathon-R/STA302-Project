@@ -30,10 +30,20 @@
 
 [AI Usage and Impact on Students & Professionals \- AI](https://www.kaggle.com/datasets/eishatuzzuhra/ai-usage-and-impact-on-students-and-professionals/data)
 
-| Pros AI economic study would be interesting and compelling to present | Cons Not very clean (would need some sort of data engineering to identify words into numbers) |
+| Pros AI economic study would be interesting and compelling to present | Cons Not very clean (would need some sort of data engineering to identify words into numbers) and is synthetic |
+| :---- | :---- |
+
+https://www.kaggle.com/datasets/khushikyad001/ai-impact-on-jobs-2030
+
+| Pros same as above | Cons Still requires a bit of engineering and is synthetic |
+| :---- | :---- |
+
+https://www.kaggle.com/datasets/sahilislam007/ai-impact-on-job-market-20242030
+
+| Pros same as above | Cons Still requires a bit of engineering and is synthetic |
 | :---- | :---- |
 
 [AI Impact on Student Life Dataset \- AI](https://www.kaggle.com/datasets/eishatuzzuhra/ai-usage-and-impact-on-students-and-professionals/data)
 
-| Pros same as above and cleaner | Cons Still requires a bit of engineering and the predictors are quite plain (could use interactions) also its not in north america its in india |
+| Pros same as above | Cons Still requires a bit of engineering and is synthetic |
 | :---- | :---- |
