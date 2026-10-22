@@ -1,7 +1,9 @@
-## Schedule A Meeting
+## Schedule & Deadlines
 | meeting # | Date | Time | Location | Confirmed |
 | :--- | :--- | :--- | :--- | :--- |
 | meeting 1 | October 27th | 1:00 pm | Discord | YES |
+| deadline 1| November 5th | 11:59pm |_|_|
+| deadline 2| December 3rd | 11:59pm |_|_|
 | meeting 2|_|_|_|_|
 | meeting 3|_|_|_|_|
 
