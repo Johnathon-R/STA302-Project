@@ -30,8 +30,12 @@
 
 https://www.kaggle.com/datasets/aliaslam25/stack-overflow-developer-survey-2025
 
-| Pros big dataset | Cons May require a bit of engineering |
+| Pros big dataset | Cons observations are compacted into percentages so the absolute number of observations is very low |
 | :---- | :---- |
+
+https://www.pewresearch.org/datasets/
+
+https://www.statcan.gc.ca/en/survey/business/4225
 
 https://www.census.gov/hfp/btos/data_downloads
 
