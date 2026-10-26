@@ -28,6 +28,10 @@
 | Pros Not to many attributes Simpler data set | Cons May not be of interest if we are super set on finance stuff Smaller data set Not all unique observations (it was bootstraped) |
 | :---- | :---- |
 
+https://www.kaggle.com/datasets/stefanoleone992/mutual-funds-and-etfs
+
+https://catalog.data.gov/dataset/mutual-fund-prospectus-risk-return-summary-data-sets
+
 https://www.kaggle.com/datasets/aliaslam25/stack-overflow-developer-survey-2025
 
 | Pros big dataset | Cons observations are compacted into percentages so the absolute number of observations is very low |
