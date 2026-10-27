@@ -14,7 +14,18 @@ We are using [US Funds dataset from Yahoo Finance](https://www.kaggle.com/datase
 
 **Files used:** [List the files used in the final analysis, such as `ETFs.csv` and, if needed, `ETF prices.csv`.]
 
-Download the dataset from the link above and place the required files in the `data/` folder. The data files are kept locally and are excluded from GitHub.
+### Downloading the data
+
+Open R with the project folder as your working directory, then run:
+
+```r
+source("download_data.R")
+etfs <- read.csv("data/ETFs.csv")
+```
+
+The script uses base R, so no extra packages or Python setup are needed. It downloads only `ETFs.csv` from version 4 of the dataset, unzips it, and saves it in `data/`. If a nonempty local copy already exists, it leaves it unchanged. The data files are excluded from GitHub.
+
+If the download is unavailable, download `ETFs.csv` from the Kaggle link above and place it in `data/` yourself.
 
 ## Analysis
 
