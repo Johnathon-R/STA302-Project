@@ -1,0 +1,13 @@
+---
+title: "STA302: Final Project"
+author: "Alexandros, Nikolas, Johnathon"
+output: html_document
+---
+
+# Data
+
+Run the below chunk to download the US Funds dataset published on Kaggle.
+```{r load-data}
+source("download_data.R")
+etfs <- read.csv("data/ETFs.csv")
+```
