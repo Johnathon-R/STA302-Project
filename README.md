@@ -12,7 +12,7 @@ We are studying ETF performance over a fixed period. Our aim is to use multiple 
 
 We are using [US Funds dataset from Yahoo Finance](https://www.kaggle.com/datasets/stefanoleone992/mutual-funds-and-etfs), published on Kaggle by Stefano Leone. The data comes from Yahoo Finance and includes ETF and mutual fund information. Our project focuses on ETFs.
 
-**Files used:** [List the files used in the final analysis, such as `ETFs.csv` and, if needed, `ETF prices.csv`.]
+**Files used:** ETF.csv
 
 ### Downloading the data
 
