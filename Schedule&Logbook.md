@@ -29,4 +29,8 @@
 - complete and fill out the plan together
   
 ## Logbook
-Note: Will include what we accomplished in meetings, updates on progress
+Meeting 1:
+- agreed upon data set (US Funds dataset from Yahoo Finance
+- research question "ETF performance over fixed time"
+- looked at data/possible predictors
+- start filling out the word
