@@ -10,8 +10,33 @@ Run the below chunk to download the US Funds dataset published on Kaggle.
 ```{r load-data}
 source("download_data.R")
 etfs <- read.csv("data/ETFs.csv")
+mutualfunds <- read.csv("data/MutualFunds.csv")
 ```
 
-# Part 0
-
 Link to docx: https://utoronto-my.sharepoint.com/:w:/r/personal/alexandros_phardis_mail_utoronto_ca/_layouts/15/Doc.aspx?sourcedoc=%7B829F4894-DB17-4CA6-B650-DFCDD9866136%7D&file=STA302%20Final%20Project%20Proposal.docx&action=default&mobileredirect=true
+
+# Clean data
+
+```{r}
+
+
+```
+
+# Apply model
+
+
+Predictors:
+- Sector indictor
+- total net assets
+- Fund age, years Inception 
+- Stock weight
+- Bond weight
+- PE ratio
+- Expense
+- 
+
+```{r}
+
+
+model <- lm()
+```

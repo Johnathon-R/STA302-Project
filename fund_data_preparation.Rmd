@@ -1,0 +1,121 @@
+---
+title: "STA302: ETF and Mutual Fund Data Preparation"
+output: html_document
+---
+
+## Load the two datasets
+
+This file uses base R only. It reads the existing `ETFs.csv` and
+`MutualFunds.csv` files in `data/`; it does not download or load price files.
+Blank entries are treated as missing values (`NA`).
+
+```{r load-data}
+etfs <- read.csv("data/ETFs.csv", na.strings = c("", "NA"))
+mutualfunds <- read.csv("data/MutualFunds.csv", na.strings = c("", "NA"))
+```
+
+## Keep the relevant columns
+
+Keep a fund identifier, the eight source variables needed for the predictors,
+and every calendar-year fund return (2000–2020). Category returns are benchmark
+returns, so they are not our response. Trailing and quarterly returns are also
+excluded. Returns remain in their original decimal units: 0.05 means 5%.
+
+```{r select-columns}
+yearly_returns <- grep("^fund_return_[0-9]{4}$", names(etfs), value = TRUE)
+
+columns <- c(
+  "fund_symbol", "fund_annual_report_net_expense_ratio",
+  "total_net_assets", "inception_date", "asset_stocks", "asset_bonds",
+  "annual_holdings_turnover", "fund_price_earning_ratio",
+  "fund_sector_technology", yearly_returns
+)
+
+etfs <- etfs[, columns]
+mutualfunds <- mutualfunds[, columns]
+
+# Identify fund type before combining the datasets.
+etfs$etf_indicator <- 1
+mutualfunds$etf_indicator <- 0
+funds <- rbind(etfs, mutualfunds)
+```
+
+## Prepare the nine predictors
+
+Use the annual-report net expense ratio because it is available in both files.
+Convert ratios and weights from proportions to percentages (0.01 becomes 1%).
+Use natural logs for assets and P/E; zero or negative values cannot be logged
+and are marked missing. Age is measured in fractional years to January 1, 2018.
+Funds launched after that date have no applicable age at the start of 2018.
+
+```{r prepare-predictors}
+funds$inception_date <- as.Date(funds$inception_date)
+funds$fund_age_years <- as.numeric(
+  as.Date("2018-01-01") - funds$inception_date
+) / 365.25
+funds$fund_age_years[funds$fund_age_years < 0] <- NA
+
+# Replace nonpositive inputs with NA before taking logs.
+assets <- funds$total_net_assets
+assets[assets <= 0] <- NA
+pe <- funds$fund_price_earning_ratio
+pe[pe <= 0] <- NA
+
+funds$log_total_net_assets <- log(assets)
+funds$log_pe_ratio <- log(pe)
+funds$net_expense_ratio_pct <- 100 * funds$fund_annual_report_net_expense_ratio
+funds$stock_weight_pct <- 100 * funds$asset_stocks
+funds$bond_weight_pct <- 100 * funds$asset_bonds
+funds$annual_turnover_pct <- 100 * funds$annual_holdings_turnover
+funds$technology_weight_pct <- 100 * funds$fund_sector_technology
+
+predictors <- c(
+  "etf_indicator", "net_expense_ratio_pct", "log_total_net_assets",
+  "fund_age_years", "stock_weight_pct", "bond_weight_pct",
+  "annual_turnover_pct", "log_pe_ratio", "technology_weight_pct"
+)
+
+# Retain only the identifier, prepared predictors, and all yearly responses.
+funds <- funds[, c("fund_symbol", predictors, yearly_returns)]
+```
+
+Stock and bond weights are included without cash and other holdings, avoiding
+an automatic sum-to-100% constraint. Missing holdings are left missing, not
+replaced with zero. Technology weight retains the source's sector-weight
+meaning; it is not recalculated as a share of total fund assets.
+
+## Check missing values and prepare the 2018 sample
+
+`funds` retains every row and every yearly response. `model_data_2018` keeps
+only funds with all nine predictors and a 2018 return. Missing returns in other
+years do not exclude a fund from this sample; those columns are still retained.
+
+```{r check-data}
+# Missing predictor counts, shown separately for each fund type.
+rbind(
+  ETF = colSums(is.na(funds[funds$etf_indicator == 1, predictors])),
+  Mutual_fund = colSums(is.na(funds[funds$etf_indicator == 0, predictors]))
+)
+
+complete_2018 <- complete.cases(funds[, c(predictors, "fund_return_2018")])
+model_data_2018 <- funds[complete_2018, ]
+
+# Compare available rows before and after complete-case selection.
+rbind(
+  All_funds = table(factor(funds$etf_indicator, levels = c(0, 1))),
+  Complete_2018 = table(factor(model_data_2018$etf_indicator, levels = c(0, 1)))
+)
+
+# Initial check of the relationship between fund type and expense ratio.
+cor(model_data_2018$etf_indicator, model_data_2018$net_expense_ratio_pct)
+```
+
+In the count table, 0 means mutual fund and 1 means ETF. The correlation is
+only an initial check; collinearity among all predictors should also be checked
+when the regression is fitted. No regression is fitted here.
+
+The source files include 2021 reporting dates, so these characteristics are
+not established as January 2018 measurements. Verify their timing before using
+them to explain 2018 returns; later characteristics cannot support a historical
+prediction claim. Complete-case selection can also change the mix of funds.
+For a different response year, reconsider the age reference date and sample.
