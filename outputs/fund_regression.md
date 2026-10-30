@@ -374,22 +374,12 @@ plot(model, which = 3)
 
 ![plot of chunk variance-plot](outputs/figures/variance-plot-1.png)
 
-**Cook's distance:** unusually tall lines identify observations that may
-strongly affect the fitted model. Investigate them before deciding what to do.
-
-
-``` r
-plot(model, which = 4)
-```
-
-![plot of chunk cooks-plot](outputs/figures/cooks-plot-1.png)
-
 **Residuals versus leverage:** observations far to the right have unusual
 predictor combinations. Large residuals and high leverage together merit review.
 
 
 ``` r
-plot(model, which = 5)
+plot(model, which = 5, cook.levels = numeric(0))
 ```
 
 ![plot of chunk leverage-plot](outputs/figures/leverage-plot-1.png)

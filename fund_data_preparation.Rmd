@@ -207,18 +207,11 @@ diagnostic; the regression still uses the original return.
 plot(model, which = 3)
 ```
 
-**Cook's distance:** unusually tall lines identify observations that may
-strongly affect the fitted model. Investigate them before deciding what to do.
-
-```{r cooks-plot}
-plot(model, which = 4)
-```
-
 **Residuals versus leverage:** observations far to the right have unusual
 predictor combinations. Large residuals and high leverage together merit review.
 
 ```{r leverage-plot}
-plot(model, which = 5)
+plot(model, which = 5, cook.levels = numeric(0))
 ```
 
 ## 9. Check relationships between predictors
