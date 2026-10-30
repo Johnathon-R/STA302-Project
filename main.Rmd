@@ -4,39 +4,163 @@ author: "Alexandros, Nikolas, Johnathon"
 output: html_document
 ---
 
-# Data
+## 1. Load and clean the data
 
-Run the below chunk to download the US Funds dataset published on Kaggle.
-```{r load-data}
-source("download_data.R")
-etfs <- read.csv("data/ETFs.csv")
-mutualfunds <- read.csv("data/MutualFunds.csv")
+Read only the two fund files. Keep the 2018 return and the columns needed
+for the nine predictors. Blank entries are treated as missing (`NA`).
+
+```{r clean-data}
+# Read in the datasets
+etfs <- read.csv("data/ETFs.csv", na.strings = c("", "NA"))
+mutualfunds <- read.csv("data/MutualFunds.csv", na.strings = c("", "NA"))
+
+# Columns to keep
+columns <- c(
+  "fund_return_2018",
+  "fund_annual_report_net_expense_ratio",
+  "total_net_assets",
+  "inception_date",
+  "asset_stocks",
+  "asset_bonds",
+  "annual_holdings_turnover",
+  "fund_price_earning_ratio",
+  "fund_sector_technology"
+)
+
+# Filter the columns but keep all rows
+etfs <- etfs[, columns]
+mutualfunds <- mutualfunds[, columns]
+
+# Create indicator variable for etf and mutual fund
+etfs$etf_indicator <- 1
+mutualfunds$etf_indicator <- 0
+funds <- rbind(etfs, mutualfunds)
+
+# Calculate age in years at January 1, 2018
+# SERIOUS: FIX THIS YEAR CALCULATION MAY NOT BE CORRECT.
+funds$inception_date <- as.Date(funds$inception_date)
+funds$fund_age_years <- as.numeric(
+  as.Date("2019-01-01") - funds$inception_date
+) / 365.25
+
+# Funds launched after that date have no applicable age for this analysis.
+funds$fund_age_years[funds$fund_age_years < 0] <- NA
+
+# The model uses age, so the original date column is no longer needed.
+# WHY NOT JUST REMOVE THE COLUMN ENTIRELY
+funds$inception_date <- NULL
+
+# Check missing values before excluding incomplete rows.
+colSums(is.na(funds))
+
+# Keep a separate cleaned table with every model value available.
+model_data <- funds[complete.cases(funds), ]
+
+# Compare counts before and after cleaning: 0 = mutual fund, 1 = ETF.
+table(funds$etf_indicator)
+table(model_data$etf_indicator)
 ```
 
-Link to docx: https://utoronto-my.sharepoint.com/:w:/r/personal/alexandros_phardis_mail_utoronto_ca/_layouts/15/Doc.aspx?sourcedoc=%7B829F4894-DB17-4CA6-B650-DFCDD9866136%7D&file=STA302%20Final%20Project%20Proposal.docx&action=default&mobileredirect=true
+Missing stock or bond weights are **unknown, not zero**. A row missing any
+required value is excluded from `model_data`, but remains in `funds`.
+Recorded zeros and other nonmissing values are kept. No outliers are removed
+and no values are filled in. The indicator and age are the only derived
+predictors; assets, P/E, weights, expenses, turnover and returns are unchanged.
 
-# Clean data
+## 2. Fit the model
 
-```{r}
+```{r regression}
+model <- lm(fund_return_2018 ~ etf_indicator +
+    fund_annual_report_net_expense_ratio +
+    total_net_assets + fund_age_years +
+    asset_stocks + asset_bonds +
+    annual_holdings_turnover + fund_price_earning_ratio +
+    fund_sector_technology,
+  data = model_data
+)
+```
 
+``` {r}
+
+summary(model)
+confint(model)  # 95% confidence intervals
 
 ```
 
-# Apply model
+The ETF coefficient compares ETFs with mutual funds while holding the other
+predictors fixed. No transformations or corrections are applied to this model.
 
+## 3. Summary tables and tests
 
-Predictors:
-- Sector indictor
-- total net assets
-- Fund age, years Inception 
-- Stock weight
-- Bond weight
-- PE ratio
-- Expense
-- 
+```{r tables}
+summary(model_data)
 
-```{r}
+# Overall test: are all nine predictor coefficients zero?
+intercept_only <- lm(fund_return_2018 ~ 1, data = model_data)
+anova(intercept_only, model)
 
+# Test each predictor while accounting for all the others.
+drop1(model, test = "F")
 
-model <- lm()
+# The first column is the response; exclude it from predictor covariance.
+covariance_matrix <- cov(model_data[, -1])
+knitr::kable(signif(covariance_matrix, 4))
 ```
+
+The covariance diagonal runs from top left to bottom right and contains
+variances. Covariances depend on units, so their sizes alone do not measure
+collinearity. Four significant digits are used only to display the table.
+
+## 4. Graphs
+
+These plots use the original returns and ordinary residuals. A residual is
+observed return minus fitted return; calculating it does not transform the model.
+
+**Boxplot:** compare returns between ETFs and mutual funds.
+
+```{r return-boxplot}
+boxplot(fund_return_2018 ~ etf_indicator, data = model_data,
+        names = c("Mutual fund", "ETF"),
+        ylab = "2018 return (decimal)", main = "2018 returns by fund type")
+```
+
+**Histogram:** examine the distribution of returns.
+
+```{r return-histogram}
+hist(model_data$fund_return_2018,
+     xlab = "2018 return (decimal)", main = "Distribution of 2018 returns")
+```
+
+**Residual plot:** look for scatter around zero with no curve or funnel shape.
+
+```{r residual-plot}
+plot(fitted(model), residuals(model),
+     xlab = "Fitted return", ylab = "Residual", main = "Residuals versus fitted")
+abline(h = 0, col = "red")
+```
+
+**Normal Q-Q plot:** points close to the line support approximately normal
+errors; departures at the ends suggest unusual tails.
+
+```{r qq-plot}
+qqnorm(residuals(model), main = "Normal Q-Q plot of residuals")
+qqline(residuals(model), col = "red")
+```
+
+**Residual boxplot:** compare the spread of errors between fund types.
+
+```{r residual-boxplot}
+boxplot(residuals(model) ~ model_data$etf_indicator,
+        names = c("Mutual fund", "ETF"),
+        ylab = "Residual", main = "Residuals by fund type")
+abline(h = 0, col = "red")
+```
+
+## Notes for later
+
+This is the baseline model, with problems left for later investigation.
+Ordinary tests assume independent errors and constant variance. Excluding
+missing values can change which funds are represented. Also, the files contain
+2021 reporting dates, so predictor measurements are not confirmed as pre-2018.
+
+[Group proposal document](https://utoronto-my.sharepoint.com/:w:/r/personal/alexandros_phardis_mail_utoronto_ca/_layouts/15/Doc.aspx?sourcedoc=%7B829F4894-DB17-4CA6-B650-DFCDD9866136%7D&file=STA302%20Final%20Project%20Proposal.docx&action=default&mobileredirect=true)
