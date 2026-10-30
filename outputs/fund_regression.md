@@ -1,19 +1,23 @@
 ---
-title: "STA302: 2018 Fund Returns and Multiple Linear Regression"
-output:
-  html_document:
-    toc: true
-    toc_depth: 2
-    code_folding: show
+title: "STA302: 2018 Fund Returns"
+output: html_document
 ---
 
+## Before you start
+
+Run the code blocks from top to bottom. Each block uses results from the ones
+above it. `<-` saves a result under a name, `$` selects a column, and `#` starts
+a comment explaining the code.
+
+We use only the 2018 return and the nine chosen predictors. Values stay in
+their original units: a return of `0.05` means 5%. No logs, rescaling,
+transformations, or model corrections are applied.
 
 
-## Load the two datasets
 
-Read the `ETFs.csv` and `MutualFunds.csv` files in `data/`.
-it does not download or load price files. Blank entries are treated as
-missing values (`NA`).
+## 1. Read the two files
+
+`read.csv()` reads a CSV file into a table. `NA` means a missing value.
 
 
 ``` r
@@ -21,713 +25,470 @@ etfs <- read.csv("data/ETFs.csv", na.strings = c("", "NA"))
 mutualfunds <- read.csv("data/MutualFunds.csv", na.strings = c("", "NA"))
 ```
 
-## Keep the relevant columns
+## 2. Keep the columns we need
 
-Keep a fund identifier, the eight source variables needed for the predictors,
-and only the 2018 calendar-year fund return. Category returns are benchmark
-returns, so they are not our response. Trailing and quarterly returns are also
-excluded. Returns remain in their original decimal units: 0.05 means 5%.
+`c()` makes a list of column names. In `[rows, columns]`, leaving the row
+position blank keeps every row.
 
 
 ``` r
-response <- "fund_return_2018"
-
 columns <- c(
-  "fund_symbol", "fund_annual_report_net_expense_ratio",
-  "total_net_assets", "inception_date", "asset_stocks", "asset_bonds",
-  "annual_holdings_turnover", "fund_price_earning_ratio",
-  "fund_sector_technology", response
+  "fund_symbol",
+  "fund_return_2018",
+  "fund_annual_report_net_expense_ratio",
+  "total_net_assets",
+  "inception_date",
+  "asset_stocks",
+  "asset_bonds",
+  "annual_holdings_turnover",
+  "fund_price_earning_ratio",
+  "fund_sector_technology"
 )
 
 etfs <- etfs[, columns]
 mutualfunds <- mutualfunds[, columns]
 
-# Identify fund type before combining the datasets.
+# Label each fund: 1 means ETF, 0 means mutual fund.
 etfs$etf_indicator <- 1
 mutualfunds$etf_indicator <- 0
+
+# Stack the two tables into one table.
 funds <- rbind(etfs, mutualfunds)
 ```
 
-## Prepare the nine predictors
+## 3. Calculate fund age
 
-Use the annual-report net expense ratio because it is available in both files.
-Convert ratios and weights from proportions to percentages (0.01 becomes 1%).
-Use natural logs for assets and P/E; zero or negative values cannot be logged
-and are marked missing. Age is measured in fractional years to January 1, 2018.
-Funds launched after that date have no applicable age at the start of 2018.
+Convert inception dates into dates R understands. Subtracting dates gives the
+number of days between them; dividing by 365.25 gives approximate years.
+This and the ETF indicator are the only derived predictors.
 
 
 ``` r
 funds$inception_date <- as.Date(funds$inception_date)
+
 funds$fund_age_years <- as.numeric(
   as.Date("2018-01-01") - funds$inception_date
 ) / 365.25
+
+# A fund launched after January 1, 2018 has no applicable age at that date.
 funds$fund_age_years[funds$fund_age_years < 0] <- NA
+```
 
-# Replace nonpositive inputs with NA before taking logs.
-assets <- funds$total_net_assets
-assets[assets <= 0] <- NA
-pe <- funds$fund_price_earning_ratio
-pe[pe <= 0] <- NA
+## 4. Check missing values
 
-funds$log_total_net_assets <- log(assets)
-funds$log_pe_ratio <- log(pe)
-funds$net_expense_ratio_pct <- 100 * funds$fund_annual_report_net_expense_ratio
-funds$stock_weight_pct <- 100 * funds$asset_stocks
-funds$bond_weight_pct <- 100 * funds$asset_bonds
-funds$annual_turnover_pct <- 100 * funds$annual_holdings_turnover
-funds$technology_weight_pct <- 100 * funds$fund_sector_technology
+Keep `funds` as the full table. Make a separate table called `model_data` for
+fitting the regression. Only rows with every model variable available are
+used; no missing values are filled in and no outliers are removed.
 
-predictors <- c(
-  "etf_indicator", "net_expense_ratio_pct", "log_total_net_assets",
-  "fund_age_years", "stock_weight_pct", "bond_weight_pct",
-  "annual_turnover_pct", "log_pe_ratio", "technology_weight_pct"
+
+``` r
+model_columns <- c(
+  "fund_return_2018",
+  "etf_indicator",
+  "fund_annual_report_net_expense_ratio",
+  "total_net_assets",
+  "fund_age_years",
+  "asset_stocks",
+  "asset_bonds",
+  "annual_holdings_turnover",
+  "fund_price_earning_ratio",
+  "fund_sector_technology"
 )
 
-# Retain only the identifier, prepared predictors, and the 2018 response.
-funds <- funds[, c("fund_symbol", predictors, response)]
+# Count missing values in each model column.
+colSums(is.na(funds[, model_columns]))
 ```
 
-Stock and bond weights are included without cash and other holdings, avoiding
-an automatic sum-to-100% constraint. Missing holdings are left missing, not
-replaced with zero. Technology weight retains the source's sector-weight
-meaning; it is not recalculated as a share of total fund assets.
+```
+##                     fund_return_2018                        etf_indicator 
+##                                 4181                                    0 
+## fund_annual_report_net_expense_ratio                     total_net_assets 
+##                                  225                                   64 
+##                       fund_age_years                         asset_stocks 
+##                                 4188                                 3476 
+##                          asset_bonds             annual_holdings_turnover 
+##                                 3476                                 2758 
+##             fund_price_earning_ratio               fund_sector_technology 
+##                                 7625                                 6210
+```
 
-## Check missing values and prepare the 2018 sample
+``` r
+# Keep rows with no missing model values.
+complete_rows <- complete.cases(funds[, model_columns])
+model_data <- funds[complete_rows, ]
 
-`funds` retains every row and only the 2018 response. `model_data_2018` keeps
-only funds with all nine predictors and a 2018 return.
+# Compare fund counts before and after removing incomplete rows.
+# In these tables: 0 = mutual fund, 1 = ETF.
+table(funds$etf_indicator)
+```
+
+```
+## 
+##     0     1 
+## 23783  2310
+```
+
+``` r
+table(model_data$etf_indicator)
+```
+
+```
+## 
+##     0     1 
+## 13201   564
+```
+
+## 5. Summarize and plot the data
+
+`summary()` shows the minimum, quartiles, median, mean, and maximum.
+The boxplot compares the two fund types before adjusting for other predictors.
 
 
 ``` r
-# Missing predictor counts, shown separately for each fund type.
-rbind(
-  ETF = colSums(is.na(funds[funds$etf_indicator == 1, predictors])),
-  Mutual_fund = colSums(is.na(funds[funds$etf_indicator == 0, predictors]))
+summary(model_data[, model_columns])
+```
+
+```
+##  fund_return_2018   etf_indicator     fund_annual_report_net_expense_ratio
+##  Min.   :-0.47814   Min.   :0.00000   Min.   :0.00010                     
+##  1st Qu.:-0.12796   1st Qu.:0.00000   1st Qu.:0.00710                     
+##  Median :-0.07897   Median :0.00000   Median :0.01000                     
+##  Mean   :-0.08705   Mean   :0.04097   Mean   :0.01083                     
+##  3rd Qu.:-0.04620   3rd Qu.:0.00000   3rd Qu.:0.01370                     
+##  Max.   : 0.22578   Max.   :1.00000   Max.   :0.11420                     
+##  total_net_assets    fund_age_years       asset_stocks     asset_bonds     
+##  Min.   :1.354e+04   Min.   : 0.008214   Min.   :0.0000   Min.   :0.00000  
+##  1st Qu.:1.732e+08   1st Qu.: 3.715264   1st Qu.:0.8339   1st Qu.:0.00000  
+##  Median :7.447e+08   Median : 9.026694   Median :0.9716   Median :0.00000  
+##  Mean   :6.280e+09   Mean   :10.563531   Mean   :0.8583   Mean   :0.08656  
+##  3rd Qu.:2.884e+09   3rd Qu.:15.534565   3rd Qu.:0.9905   3rd Qu.:0.04350  
+##  Max.   :7.534e+11   Max.   :93.464750   Max.   :1.0000   Max.   :0.98430  
+##  annual_holdings_turnover fund_price_earning_ratio fund_sector_technology
+##  Min.   : 0.0100          Min.   : 0.33            Min.   :0.0000        
+##  1st Qu.: 0.2600          1st Qu.:19.99            1st Qu.:0.1060        
+##  Median : 0.4700          Median :23.17            Median :0.1771        
+##  Mean   : 0.7213          Mean   :24.58            Mean   :0.1757        
+##  3rd Qu.: 0.8200          3rd Qu.:27.82            3rd Qu.:0.2287        
+##  Max.   :66.2700          Max.   :59.99            Max.   :1.0000
+```
+
+
+``` r
+boxplot(fund_return_2018 ~ etf_indicator, data = model_data,
+        names = c("Mutual fund", "ETF"),
+        main = "2018 returns by fund type",
+        ylab = "2018 return (decimal)")
+```
+
+![plot of chunk return-boxplot](outputs/figures/return-boxplot-1.png)
+
+
+``` r
+hist(model_data$fund_return_2018,
+     main = "Distribution of 2018 returns",
+     xlab = "2018 return (decimal)")
+```
+
+![plot of chunk return-histogram](outputs/figures/return-histogram-1.png)
+
+## 6. Fit the multiple linear regression
+
+`lm()` fits a linear regression. The response goes to the left of `~`, and
+the predictors go to the right. `+` adds another predictor to the model.
+
+
+``` r
+model <- lm(
+  fund_return_2018 ~ etf_indicator +
+    fund_annual_report_net_expense_ratio +
+    total_net_assets +
+    fund_age_years +
+    asset_stocks +
+    asset_bonds +
+    annual_holdings_turnover +
+    fund_price_earning_ratio +
+    fund_sector_technology,
+  data = model_data
 )
-```
 
-```
-##             etf_indicator net_expense_ratio_pct log_total_net_assets fund_age_years
-## ETF                     0                    15                   30            900
-## Mutual_fund             0                   210                   34           3288
-##             stock_weight_pct bond_weight_pct annual_turnover_pct log_pe_ratio technology_weight_pct
-## ETF                     1036            1036                 950          814                   694
-## Mutual_fund             2440            2440                1808         6811                  5516
-```
-
-``` r
-complete_2018 <- complete.cases(funds[, c(predictors, "fund_return_2018")])
-model_data_2018 <- funds[complete_2018, ]
-
-# Compare available rows before and after complete-case selection.
-rbind(
-  All_funds = table(factor(funds$etf_indicator, levels = c(0, 1))),
-  Complete_2018 = table(factor(model_data_2018$etf_indicator, levels = c(0, 1)))
-)
-```
-
-```
-##                   0    1
-## All_funds     23783 2310
-## Complete_2018 13201  564
-```
-
-``` r
-# Initial check of the relationship between fund type and expense ratio.
-cor(model_data_2018$etf_indicator, model_data_2018$net_expense_ratio_pct)
-```
-
-```
-## [1] -0.2336357
-```
-
-In the count table, 0 means mutual fund and 1 means ETF. Complete-case selection
-can change the mix of funds; missingness is not assumed to be random.
-
-## Scope and additional predictors
-
-The source files contain 2021 reporting dates. The predictor measurements are
-not established as January 2018 observations, so this is an exploratory
-association model, not a historical forecasting or causal model. Obtain
-pre-2018 characteristics before making such claims.
-
-**Fund category** is the strongest candidate to investigate next: it can
-separate investment strategies (for example, domestic equity, international
-equity, and bond funds). `fund_category` exists in these files, but it is not
-added automatically because categories can be sparse and overlap strongly with
-stock/bond weights. Check ETF and mutual-fund representation within categories
-before a category-adjusted comparison. Other useful candidates are verified
-pre-2018 geographic exposure and market capitalization/style. The available
-trailing beta fields must not be treated as pre-2018 measures without checking
-their estimation dates. Avoid adding later returns as explanatory variables.
-
-Different share classes may represent the same underlying portfolio, and funds
-also share market exposures. Row independence cannot be established from these
-plots. Fund-family/portfolio identifiers would help assess clustering; HC3
-standard errors below do not correct dependence between rows. The surviving
-funds in this later snapshot may also be unrepresentative of all funds in 2018.
-
-## Descriptive tables and box plots
-
-For easier interpretation, the model uses return in **percentage points**:
--0.05 becomes -5. Predictor percentages already use the same convention.
-
-
-``` r
-model_data_2018$return_2018_pct <- 100 * model_data_2018$fund_return_2018
-fund_type <- factor(model_data_2018$etf_indicator,
-                    levels = c(0, 1), labels = c("Mutual fund", "ETF"))
-variables <- c("return_2018_pct", predictors)
-descriptive <- t(sapply(model_data_2018[, variables], function(x) {
-  c(N = length(x), Mean = mean(x), SD = sd(x), Min = min(x),
-    Q1 = unname(quantile(x, 0.25)), Median = median(x),
-    Q3 = unname(quantile(x, 0.75)), Max = max(x))
-}))
-knitr::kable(descriptive, digits = 3)
-```
-
-
-
-|                      |     N|   Mean|      SD|     Min|      Q1| Median|     Q3|      Max|
-|:---------------------|-----:|------:|-------:|-------:|-------:|------:|------:|--------:|
-|return_2018_pct       | 13765| -8.705|   6.226| -47.814| -12.796| -7.897| -4.620|   22.578|
-|etf_indicator         | 13765|  0.041|   0.198|   0.000|   0.000|  0.000|  0.000|    1.000|
-|net_expense_ratio_pct | 13765|  1.083|   0.576|   0.010|   0.710|  1.000|  1.370|   11.420|
-|log_total_net_assets  | 13765| 20.378|   2.133|   9.513|  18.970| 20.429| 21.782|   27.348|
-|fund_age_years        | 13765| 10.564|   9.045|   0.008|   3.715|  9.027| 15.535|   93.465|
-|stock_weight_pct      | 13765| 85.827|  23.135|   0.000|  83.390| 97.160| 99.050|  100.000|
-|bond_weight_pct       | 13765|  8.656|  18.986|   0.000|   0.000|  0.000|  4.350|   98.430|
-|annual_turnover_pct   | 13765| 72.133| 148.456|   1.000|  26.000| 47.000| 82.000| 6627.000|
-|log_pe_ratio          | 13765|  3.154|   0.325|  -1.109|   2.995|  3.143|  3.326|    4.094|
-|technology_weight_pct | 13765| 17.569|  11.089|   0.000|  10.600| 17.710| 22.870|  100.000|
-
-``` r
-group_summary <- t(sapply(split(model_data_2018$return_2018_pct, fund_type),
-                           function(x) c(N = length(x), Mean = mean(x), SD = sd(x))))
-knitr::kable(group_summary, digits = 3)
-```
-
-
-
-|            |     N|    Mean|    SD|
-|:-----------|-----:|-------:|-----:|
-|Mutual fund | 13201|  -8.640| 6.143|
-|ETF         |   564| -10.222| 7.788|
-
-
-``` r
-par(mfrow = c(1, 2))
-boxplot(return_2018_pct ~ fund_type, data = model_data_2018,
-        col = c("lightblue", "peachpuff"), ylab = "2018 return (%)",
-        main = "Unadjusted returns by fund type")
-hist(model_data_2018$return_2018_pct, breaks = 60, col = "lightblue",
-     main = "Distribution of 2018 returns", xlab = "2018 return (%)")
-```
-
-![plot of chunk return-boxplots](outputs/figures/return-boxplots-1.png)
-
-``` r
-par(mfrow = c(1, 1))
-```
-
-
-``` r
-par(mfrow = c(3, 3), mar = c(3, 4, 3, 1))
-for (v in predictors[-1]) {
-  boxplot(model_data_2018[[v]] ~ fund_type, main = v,
-          col = c("lightblue", "peachpuff"), cex.main = 0.8, ylab = "Value")
-}
-par(mfrow = c(1, 1))
-```
-
-![plot of chunk predictor-boxplots](outputs/figures/predictor-boxplots-1.png)
-
-## Fit the prespecified multiple linear regression
-
-Each slope describes the association with 2018 return while holding the other
-predictors fixed. The ETF coefficient is the adjusted ETF-minus-mutual-fund
-difference in percentage points. Log-variable slopes correspond to a one-unit
-increase in the natural log, not a one-dollar change in assets.
-
-
-``` r
-model <- lm(return_2018_pct ~ etf_indicator + net_expense_ratio_pct +
-              log_total_net_assets + fund_age_years + stock_weight_pct +
-              bond_weight_pct + annual_turnover_pct + log_pe_ratio +
-              technology_weight_pct, data = model_data_2018)
 summary(model)
 ```
 
 ```
 ## 
 ## Call:
-## lm(formula = return_2018_pct ~ etf_indicator + net_expense_ratio_pct + 
-##     log_total_net_assets + fund_age_years + stock_weight_pct + 
-##     bond_weight_pct + annual_turnover_pct + log_pe_ratio + technology_weight_pct, 
-##     data = model_data_2018)
+## lm(formula = fund_return_2018 ~ etf_indicator + fund_annual_report_net_expense_ratio + 
+##     total_net_assets + fund_age_years + asset_stocks + asset_bonds + 
+##     annual_holdings_turnover + fund_price_earning_ratio + fund_sector_technology, 
+##     data = model_data)
 ## 
 ## Residuals:
-##     Min      1Q  Median      3Q     Max 
-## -46.421  -2.641   0.151   2.955  35.321 
+##      Min       1Q   Median       3Q      Max 
+## -0.46067 -0.02553  0.00301  0.02954  0.35213 
 ## 
 ## Coefficients:
-##                         Estimate Std. Error t value Pr(>|t|)    
-## (Intercept)           -2.848e+01  8.140e-01 -34.983  < 2e-16 ***
-## etf_indicator          4.143e-01  2.381e-01   1.740   0.0819 .  
-## net_expense_ratio_pct -1.154e+00  8.753e-02 -13.188  < 2e-16 ***
-## log_total_net_assets   2.690e-01  2.284e-02  11.778  < 2e-16 ***
-## fund_age_years         8.656e-03  5.149e-03   1.681   0.0927 .  
-## stock_weight_pct      -7.116e-02  5.051e-03 -14.089  < 2e-16 ***
-## bond_weight_pct        4.215e-02  6.170e-03   6.831 8.77e-12 ***
-## annual_turnover_pct    1.538e-03  3.145e-04   4.891 1.02e-06 ***
-## log_pe_ratio           6.238e+00  1.609e-01  38.761  < 2e-16 ***
-## technology_weight_pct  7.913e-02  4.614e-03  17.152  < 2e-16 ***
+##                                        Estimate Std. Error t value Pr(>|t|)    
+## (Intercept)                          -1.000e-01  5.267e-03 -18.994  < 2e-16 ***
+## etf_indicator                         5.881e-04  2.339e-03   0.251  0.80151    
+## fund_annual_report_net_expense_ratio -1.456e+00  8.463e-02 -17.209  < 2e-16 ***
+## total_net_assets                      1.111e-13  1.698e-14   6.545 6.17e-11 ***
+## fund_age_years                        1.716e-04  4.987e-05   3.442  0.00058 ***
+## asset_stocks                         -7.502e-02  4.988e-03 -15.043  < 2e-16 ***
+## asset_bonds                           3.192e-02  6.077e-03   5.252 1.53e-07 ***
+## annual_holdings_turnover              1.208e-03  3.091e-04   3.908 9.37e-05 ***
+## fund_price_earning_ratio              3.047e-03  6.753e-05  45.121  < 2e-16 ***
+## fund_sector_technology                6.873e-02  4.575e-03  15.023  < 2e-16 ***
 ## ---
 ## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 ## 
-## Residual standard error: 5.251 on 13755 degrees of freedom
-## Multiple R-squared:  0.2892,	Adjusted R-squared:  0.2888 
-## F-statistic: 621.9 on 9 and 13755 DF,  p-value: < 2.2e-16
+## Residual standard error: 0.05191 on 13755 degrees of freedom
+## Multiple R-squared:  0.3054,	Adjusted R-squared:  0.305 
+## F-statistic:   672 on 9 and 13755 DF,  p-value: < 2.2e-16
 ```
 
-``` r
-coefficient_table <- cbind(summary(model)$coefficients, confint(model))
-knitr::kable(coefficient_table, digits = 5,
-             caption = "OLS coefficients, t tests and 95% confidence intervals")
-```
-
-
-
-Table: OLS coefficients, t tests and 95% confidence intervals
-
-|                      |  Estimate| Std. Error|   t value| Pr(>&#124;t&#124;)|     2.5 %|    97.5 %|
-|:---------------------|---------:|----------:|---------:|------------------:|---------:|---------:|
-|(Intercept)           | -28.47620|    0.81399| -34.98338|            0.00000| -30.07173| -26.88066|
-|etf_indicator         |   0.41429|    0.23810|   1.74002|            0.08188|  -0.05241|   0.88099|
-|net_expense_ratio_pct |  -1.15436|    0.08753| -13.18753|            0.00000|  -1.32593|  -0.98278|
-|log_total_net_assets  |   0.26903|    0.02284|  11.77770|            0.00000|   0.22425|   0.31380|
-|fund_age_years        |   0.00866|    0.00515|   1.68121|            0.09275|  -0.00144|   0.01875|
-|stock_weight_pct      |  -0.07116|    0.00505| -14.08940|            0.00000|  -0.08106|  -0.06126|
-|bond_weight_pct       |   0.04215|    0.00617|   6.83122|            0.00000|   0.03006|   0.05424|
-|annual_turnover_pct   |   0.00154|    0.00031|   4.89078|            0.00000|   0.00092|   0.00215|
-|log_pe_ratio          |   6.23750|    0.16092|  38.76093|            0.00000|   5.92207|   6.55293|
-|technology_weight_pct |   0.07913|    0.00461|  17.15152|            0.00000|   0.07009|   0.08818|
-
-``` r
-fit_table <- data.frame(N = nobs(model), R_squared = summary(model)$r.squared,
-                        Adjusted_R_squared = summary(model)$adj.r.squared,
-                        Residual_SD_pp = sigma(model),
-                        Training_RMSE_pp = sqrt(mean(residuals(model)^2)))
-knitr::kable(fit_table, digits = 4)
-```
-
-
-
-|     N| R_squared| Adjusted_R_squared| Residual_SD_pp| Training_RMSE_pp|
-|-----:|---------:|------------------:|--------------:|----------------:|
-| 13765|    0.2892|             0.2888|         5.2508|           5.2489|
-
-## ANOVA and hypothesis tests
-
-The overall F test tests that all nine slopes are zero. The partial F tests
-below test each term after adjusting for **all** other predictors. For a
-single slope, the partial F statistic equals the squared ordinary t statistic.
-The final comparison explicitly tests H0: the adjusted ETF coefficient is zero.
-All these classical tests assume independent, constant-variance errors and an
-adequate mean model; small p-values alone do not establish model adequacy.
+In the output, **Estimate** is each coefficient, **Pr(>|t|)** is its p-value,
+and **Adjusted R-squared** summarizes the model's fit while accounting for the
+number of predictors. The ETF coefficient compares ETFs with mutual funds
+while holding the other predictors fixed. Its units are decimal return.
 
 
 ``` r
-null_model <- lm(return_2018_pct ~ 1, data = model_data_2018)
-knitr::kable(anova(null_model, model), digits = 5, caption = "Overall F test")
+# Ordinary 95% confidence intervals for the coefficients.
+confint(model)
 ```
 
-
-
-Table: Overall F test
-
-| Res.Df|      RSS| Df| Sum of Sq|       F| Pr(>F)|
-|------:|--------:|--:|---------:|-------:|------:|
-|  13764| 533564.5| NA|        NA|      NA|     NA|
-|  13755| 379237.0|  9|  154327.5| 621.943|      0|
-
-``` r
-knitr::kable(drop1(model, test = "F"), digits = 5,
-             caption = "Partial F tests: each term adjusted for all others")
+```
+##                                              2.5 %        97.5 %
+## (Intercept)                          -1.103660e-01 -8.971748e-02
+## etf_indicator                        -3.997090e-03  5.173250e-03
+## fund_annual_report_net_expense_ratio -1.622251e+00 -1.290488e+00
+## total_net_assets                      7.785200e-14  1.444212e-13
+## fund_age_years                        7.388051e-05  2.693797e-04
+## asset_stocks                         -8.480091e-02 -6.524852e-02
+## asset_bonds                           2.000406e-02  4.382644e-02
+## annual_holdings_turnover              6.019687e-04  1.813728e-03
+## fund_price_earning_ratio              2.914790e-03  3.179535e-03
+## fund_sector_technology                5.976081e-02  7.769554e-02
 ```
 
+## 7. ANOVA and hypothesis tests
 
-
-Table: Partial F tests: each term adjusted for all others
-
-|                      | Df|   Sum of Sq|      RSS|      AIC|    F value|  Pr(>F)|
-|:---------------------|--:|-----------:|--------:|--------:|----------:|-------:|
-|<none>                | NA|          NA| 379237.0| 45665.18|         NA|      NA|
-|etf_indicator         |  1|    83.47500| 379320.5| 45666.21|    3.02765| 0.08188|
-|net_expense_ratio_pct |  1|  4794.87376| 384031.9| 45836.13|  173.91100| 0.00000|
-|log_total_net_assets  |  1|  3824.47014| 383061.5| 45801.30|  138.71428| 0.00000|
-|fund_age_years        |  1|    77.92793| 379314.9| 45666.01|    2.82646| 0.09275|
-|stock_weight_pct      |  1|  5473.12212| 384710.1| 45860.42|  198.51120| 0.00000|
-|bond_weight_pct       |  1|  1286.60820| 380523.6| 45709.80|   46.66553| 0.00000|
-|annual_turnover_pct   |  1|   659.48816| 379896.5| 45687.10|   23.91976| 0.00000|
-|log_pe_ratio          |  1| 41422.69811| 420659.7| 47090.10| 1502.40932| 0.00000|
-|technology_weight_pct |  1|  8110.64108| 387347.6| 45954.47|  294.17453| 0.00000|
-
-``` r
-without_etf <- update(model, . ~ . - etf_indicator)
-knitr::kable(anova(without_etf, model), digits = 5,
-             caption = "Adjusted ETF indicator hypothesis test")
-```
-
-
-
-Table: Adjusted ETF indicator hypothesis test
-
-| Res.Df|      RSS| Df| Sum of Sq|       F|  Pr(>F)|
-|------:|--------:|--:|---------:|-------:|-------:|
-|  13756| 379320.5| NA|        NA|      NA|      NA|
-|  13755| 379237.0|  1|    83.475| 3.02765| 0.08188|
-
-## Residual and normal Q-Q plots
-
-Look for a horizontal residual smooth near zero, roughly constant vertical
-spread, and Q-Q points near the line. The scale-location plot highlights
-unequal variance. Tail departures and influential observations need attention;
-normality concerns the model errors, not the predictors or raw returns.
+First compare the full model with an intercept-only model. This tests whether
+all nine predictor coefficients are zero together.
 
 
 ``` r
-par(mfrow = c(2, 2))
-plot(model, which = c(1, 2, 3, 5), id.n = 3)
+intercept_only <- lm(fund_return_2018 ~ 1, data = model_data)
+anova(intercept_only, model)
 ```
 
-![plot of chunk standard-diagnostics](outputs/figures/standard-diagnostics-1.png)
-
-``` r
-par(mfrow = c(1, 1))
+```
+## Analysis of Variance Table
+## 
+## Model 1: fund_return_2018 ~ 1
+## Model 2: fund_return_2018 ~ etf_indicator + fund_annual_report_net_expense_ratio + 
+##     total_net_assets + fund_age_years + asset_stocks + asset_bonds + 
+##     annual_holdings_turnover + fund_price_earning_ratio + fund_sector_technology
+##   Res.Df    RSS Df Sum of Sq      F    Pr(>F)    
+## 1  13764 53.356                                  
+## 2  13755 37.060  9    16.296 672.05 < 2.2e-16 ***
+## ---
+## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 ```
 
-
-``` r
-par(mfrow = c(1, 2))
-plot(fitted(model), model_data_2018$return_2018_pct,
-     pch = 16, col = adjustcolor("steelblue", 0.2),
-     xlab = "Fitted return (%)", ylab = "Observed return (%)",
-     main = "Observed versus fitted")
-abline(0, 1, col = "red", lwd = 2)
-boxplot(residuals(model) ~ fund_type, col = c("lightblue", "peachpuff"),
-        main = "Residuals by fund type", ylab = "Residual (percentage points)")
-abline(h = 0, col = "red", lty = 2)
-```
-
-![plot of chunk observed-fitted-and-residual-boxplot](outputs/figures/observed-fitted-and-residual-boxplot-1.png)
-
-``` r
-par(mfrow = c(1, 1))
-```
+Next test each predictor after accounting for all the others. `drop1()` checks
+what happens if each predictor is removed, one at a time. The ETF row tests
+whether its adjusted coefficient is zero. These tests do not change `model`.
 
 
 ``` r
-par(mfrow = c(3, 3), mar = c(4, 4, 3, 1))
-for (v in predictors[-1]) {
-  x <- model_data_2018[[v]]
-  plot(x, residuals(model), pch = 16, col = adjustcolor("steelblue", 0.15),
-       xlab = v, ylab = "Residual", cex.lab = 0.8)
-  abline(h = 0, lty = 2)
-  lines(lowess(x, residuals(model)), col = "red", lwd = 2)
-}
-par(mfrow = c(1, 1))
+drop1(model, test = "F")
 ```
 
-![plot of chunk residuals-by-predictor](outputs/figures/residuals-by-predictor-1.png)
+```
+## Single term deletions
+## 
+## Model:
+## fund_return_2018 ~ etf_indicator + fund_annual_report_net_expense_ratio + 
+##     total_net_assets + fund_age_years + asset_stocks + asset_bonds + 
+##     annual_holdings_turnover + fund_price_earning_ratio + fund_sector_technology
+##                                      Df Sum of Sq    RSS    AIC   F value
+## <none>                                            37.060 -81432          
+## etf_indicator                         1    0.0002 37.060 -81434    0.0632
+## fund_annual_report_net_expense_ratio  1    0.7979 37.858 -81141  296.1564
+## total_net_assets                      1    0.1154 37.176 -81391   42.8352
+## fund_age_years                        1    0.0319 37.092 -81422   11.8449
+## asset_stocks                          1    0.6097 37.670 -81210  226.2777
+## asset_bonds                           1    0.0743 37.134 -81407   27.5841
+## annual_holdings_turnover              1    0.0411 37.101 -81419   15.2695
+## fund_price_earning_ratio              1    5.4854 42.546 -79534 2035.9438
+## fund_sector_technology                1    0.6081 37.668 -81210  225.6902
+##                                         Pr(>F)    
+## <none>                                            
+## etf_indicator                        0.8015077    
+## fund_annual_report_net_expense_ratio < 2.2e-16 ***
+## total_net_assets                     6.166e-11 ***
+## fund_age_years                       0.0005799 ***
+## asset_stocks                         < 2.2e-16 ***
+## asset_bonds                          1.527e-07 ***
+## annual_holdings_turnover             9.366e-05 ***
+## fund_price_earning_ratio             < 2.2e-16 ***
+## fund_sector_technology               < 2.2e-16 ***
+## ---
+## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+```
 
-## Collinearity
+## 8. Check the regression assumptions
 
-The correlation plot shows pairwise relationships. VIF checks each predictor
-against all other predictors together. Values above 5 merit investigation;
-this is a guide, not an automatic deletion rule.
+R already provides the main diagnostic plots, so we can draw them directly.
+These plots help identify problems to fix later; they do not fix the model.
+
+**Residuals versus fitted:** look for residuals scattered around zero, without
+curvature or a funnel shape.
 
 
 ``` r
-correlations <- cor(model_data_2018[, predictors])
-par(mar = c(12, 12, 3, 2))
-image(seq_along(predictors), seq_along(predictors), correlations,
-      zlim = c(-1, 1), col = colorRampPalette(c("navy", "white", "firebrick"))(100),
-      axes = FALSE, xlab = "", ylab = "", main = "Predictor correlations (blue -1; red +1)")
-axis(1, at = seq_along(predictors), labels = predictors, las = 2, cex.axis = 0.7)
-axis(2, at = seq_along(predictors), labels = predictors, las = 2, cex.axis = 0.7)
-for (i in seq_along(predictors)) for (j in seq_along(predictors)) {
-  text(i, j, round(correlations[i, j], 2), cex = 0.65,
-       col = ifelse(abs(correlations[i, j]) > 0.6, "white", "black"))
-}
+plot(model, which = 1)
 ```
 
-![plot of chunk collinearity](outputs/figures/collinearity-1.png)
+![plot of chunk residual-plot](outputs/figures/residual-plot-1.png)
 
-``` r
-par(mar = c(5, 4, 4, 2) + 0.1)
-vif <- sapply(predictors, function(v) {
-  auxiliary <- lm(reformulate(setdiff(predictors, v), response = v),
-                  data = model_data_2018)
-  1 / (1 - summary(auxiliary)$r.squared)
-})
-knitr::kable(data.frame(Predictor = predictors, VIF = vif), row.names = FALSE, digits = 3)
-```
-
-
-
-|Predictor             |   VIF|
-|:---------------------|-----:|
-|etf_indicator         | 1.112|
-|net_expense_ratio_pct | 1.271|
-|log_total_net_assets  | 1.185|
-|fund_age_years        | 1.083|
-|stock_weight_pct      | 6.816|
-|bond_weight_pct       | 6.851|
-|annual_turnover_pct   | 1.088|
-|log_pe_ratio          | 1.363|
-|technology_weight_pct | 1.307|
-
-## Unequal variance and robust inference
-
-The studentized Breusch–Pagan (Koenker) test regresses squared residuals on the
-predictors; H0 is constant conditional variance. With this large sample,
-interpret its p-value together with the plots. HC3 standard errors allow
-unequal variance but still assume independent observations and a suitable mean
-model. Their large-sample z tests and confidence intervals are a sensitivity
-check, not a cure for dependence, missing confounders or incorrect timing.
+**Normal Q-Q:** points close to the line support approximately normal errors.
+Large departures, especially at the ends, suggest non-normal tails.
 
 
 ``` r
-squared_residuals <- residuals(model)^2
-variance_model <- lm(reformulate(predictors, response = "squared_residuals"),
-                     data = model_data_2018)
-bp_stat <- nobs(model) * summary(variance_model)$r.squared
-knitr::kable(data.frame(Test = "Studentized Breusch-Pagan", Statistic = bp_stat,
-                        df = length(predictors),
-                        p_value = pchisq(bp_stat, length(predictors), lower.tail = FALSE)))
+plot(model, which = 2)
 ```
 
+![plot of chunk qq-plot](outputs/figures/qq-plot-1.png)
 
-
-|Test                      | Statistic| df| p_value|
-|:-------------------------|---------:|--:|-------:|
-|Studentized Breusch-Pagan |   698.071|  9|       0|
-
-``` r
-# HC3 covariance: inflate each squared residual by its leverage adjustment.
-X <- model.matrix(model)
-bread <- solve(crossprod(X))
-hc3_weights <- (residuals(model) / (1 - hatvalues(model)))^2
-hc3_cov <- bread %*% crossprod(X, X * hc3_weights) %*% bread
-hc3_se <- sqrt(diag(hc3_cov))
-robust_table <- data.frame(Estimate = coef(model), HC3_SE = hc3_se,
-                           z = coef(model) / hc3_se,
-                           p_value = 2 * pnorm(-abs(coef(model) / hc3_se)),
-                           CI_lower = coef(model) - qnorm(0.975) * hc3_se,
-                           CI_upper = coef(model) + qnorm(0.975) * hc3_se)
-knitr::kable(robust_table, digits = 5)
-```
-
-
-
-|                      |  Estimate|  HC3_SE|         z| p_value|  CI_lower|  CI_upper|
-|:---------------------|---------:|-------:|---------:|-------:|---------:|---------:|
-|(Intercept)           | -28.47620| 1.17492| -24.23672| 0.00000| -30.77900| -26.17340|
-|etf_indicator         |   0.41429| 0.33173|   1.24888| 0.21171|  -0.23589|   1.06447|
-|net_expense_ratio_pct |  -1.15436| 0.14739|  -7.83196| 0.00000|  -1.44324|  -0.86548|
-|log_total_net_assets  |   0.26903| 0.02365|  11.37496| 0.00000|   0.22267|   0.31538|
-|fund_age_years        |   0.00866| 0.00519|   1.66846| 0.09522|  -0.00151|   0.01882|
-|stock_weight_pct      |  -0.07116| 0.00776|  -9.17247| 0.00000|  -0.08637|  -0.05596|
-|bond_weight_pct       |   0.04215| 0.00888|   4.74499| 0.00000|   0.02474|   0.05956|
-|annual_turnover_pct   |   0.00154| 0.00042|   3.64324| 0.00027|   0.00071|   0.00237|
-|log_pe_ratio          |   6.23750| 0.28028|  22.25492| 0.00000|   5.68817|   6.78683|
-|technology_weight_pct |   0.07913| 0.00635|  12.45451| 0.00000|   0.06668|   0.09159|
-
-## Influential observations
-
-Cook's distance combines residual size and leverage. The 4/n and 2p/n lines
-are screening guides, not reasons to delete observations. Identify and check
-funds before deciding whether their records are incorrect or represent a
-population outside the research question.
+**Scale-location:** a roughly horizontal trend and even spread support
+constant error variance. The plotted residuals are standardized only for the
+diagnostic; the regression still uses the original return.
 
 
 ``` r
-cooks <- cooks.distance(model)
-leverage <- hatvalues(model)
-n <- nobs(model)
-p <- length(coef(model))
-par(mfrow = c(1, 2))
-plot(cooks, type = "h", main = "Cook's distance", ylab = "Cook's D", xlab = "Row")
-abline(h = 4 / n, col = "red", lty = 2)
-plot(leverage, rstandard(model), pch = 16, col = adjustcolor("steelblue", 0.2),
-     main = "Leverage and standardized residuals", xlab = "Leverage", ylab = "Standardized residual")
-abline(v = 2 * p / n, h = c(-3, 3), col = "red", lty = 2)
+plot(model, which = 3)
 ```
 
-![plot of chunk influence](outputs/figures/influence-1.png)
+![plot of chunk variance-plot](outputs/figures/variance-plot-1.png)
 
-``` r
-par(mfrow = c(1, 1))
-influence_table <- data.frame(Fund = model_data_2018$fund_symbol,
-                              ETF = model_data_2018$etf_indicator,
-                              Cooks_D = cooks, Leverage = leverage,
-                              Standardized_residual = rstandard(model))
-knitr::kable(head(influence_table[order(-cooks), ], 10), digits = 5, row.names = FALSE)
-```
-
-
-
-|Fund  | ETF| Cooks_D| Leverage| Standardized_residual|
-|:-----|---:|-------:|--------:|---------------------:|
-|BIZD  |   1| 0.07444|  0.02971|               4.93081|
-|LOANX |   0| 0.05764|  0.02840|               4.44104|
-|LOAIX |   0| 0.05491|  0.02703|               4.44592|
-|FXSAX |   0| 0.04752|  0.04384|              -3.21935|
-|FRICX |   0| 0.04433|  0.01545|               5.31581|
-|FFRLX |   0| 0.04302|  0.01523|               5.27414|
-|FFRSX |   0| 0.04280|  0.01521|               5.26430|
-|ABRJX |   0| 0.03448|  0.00441|              -8.82188|
-|ABRSX |   0| 0.03415|  0.00433|              -8.86004|
-|FXTAX |   0| 0.02747|  0.15104|              -1.24247|
-
-## Box–Cox table and profile plot
-
-Ordinary Box–Cox requires a positive response. Use **gross return = 1 + decimal
-return**, the ending value of one unit invested. This has an economic meaning
-and is positive when loss is less than 100%; no arbitrary minimum-based shift
-is used. Lambda = 1 is equivalent to the original untransformed regression up
-to scale and intercept; lambda = 0 models log gross return. The grid-based 95%
-profile interval is approximate. Transformation does not fix predictor timing,
-clustering, or omitted variables, and is explored rather than automatically
-adopted. The selected transformed model has different coefficient units.
+**Cook's distance:** unusually tall lines identify observations that may
+strongly affect the fitted model. Investigate them before deciding what to do.
 
 
 ``` r
-model_data_2018$gross_return <- 1 + model_data_2018$fund_return_2018
-stopifnot(all(model_data_2018$gross_return > 0))
-gross_model <- update(model, gross_return ~ .)
-bc <- MASS::boxcox(gross_model, lambda = seq(-5, 5, by = 0.1),
-                   plotit = FALSE)
-best_lambda <- bc$x[which.max(bc$y)]
-cutoff <- max(bc$y) - qchisq(0.95, df = 1) / 2
-boxcox_table <- data.frame(Lambda = bc$x, Profile_log_likelihood = bc$y,
-                           Inside_95pct_profile_interval = bc$y >= cutoff)
-write.csv(boxcox_table, "outputs/boxcox_full_table.csv", row.names = FALSE)
-# Display conventional transformations and the optimum; export the full grid.
-show_rows <- abs(bc$x - best_lambda) < 1e-8 |
-             sapply(bc$x, function(x) any(abs(x - c(-2, -1, -0.5, 0, 0.5, 1, 2)) < 1e-8))
-knitr::kable(boxcox_table[show_rows, ], digits = 4, row.names = FALSE)
+plot(model, which = 4)
 ```
 
+![plot of chunk cooks-plot](outputs/figures/cooks-plot-1.png)
 
-
-| Lambda| Profile_log_likelihood|Inside_95pct_profile_interval |
-|------:|----------------------:|:-----------------------------|
-|   -2.0|              -28143.15|FALSE                         |
-|   -1.0|              -27254.74|FALSE                         |
-|   -0.5|              -26927.92|FALSE                         |
-|    0.0|              -26665.93|FALSE                         |
-|    0.5|              -26461.35|FALSE                         |
-|    1.0|              -26308.47|FALSE                         |
-|    2.0|              -26141.53|FALSE                         |
-|    2.5|              -26121.77|TRUE                          |
-
-``` r
-profile_interval <- range(bc$x[bc$y >= cutoff])
-knitr::kable(data.frame(Best_lambda = best_lambda,
-                        Lower_grid_95 = profile_interval[1], Upper_grid_95 = profile_interval[2]))
-```
-
-
-
-| Best_lambda| Lower_grid_95| Upper_grid_95|
-|-----------:|-------------:|-------------:|
-|         2.5|           2.4|           2.6|
-
-``` r
-if (any(profile_interval %in% range(bc$x))) {
-  cat("The profile interval touches the grid boundary; expand the grid before interpreting it.")
-}
-plot(bc$x, bc$y, type = "l", xlab = expression(lambda),
-     ylab = "Profile log likelihood", main = "Box-Cox profile: gross return")
-abline(h = cutoff, lty = 2, col = "red")
-abline(v = c(best_lambda, 1), col = c("blue", "darkgreen"), lty = c(1, 2))
-legend("bottomright", c("Best grid lambda", "Untransformed (lambda = 1)", "95% cutoff"),
-       col = c("blue", "darkgreen", "red"), lty = c(1, 2, 2), cex = 0.8)
-```
-
-![plot of chunk box-cox](outputs/figures/box-cox-1.png)
-
-``` r
-model_data_2018$transformed_return <- if (abs(best_lambda) < 1e-8) {
-  log(model_data_2018$gross_return)
-} else {
-  (model_data_2018$gross_return^best_lambda - 1) / best_lambda
-}
-transformed_model <- update(model, transformed_return ~ .)
-```
+**Residuals versus leverage:** observations far to the right have unusual
+predictor combinations. Large residuals and high leverage together merit review.
 
 
 ``` r
-par(mfrow = c(2, 2))
-plot(transformed_model, which = c(1, 2, 3, 5), id.n = 3)
+plot(model, which = 5)
 ```
 
-![plot of chunk transformed-diagnostics](outputs/figures/transformed-diagnostics-1.png)
+![plot of chunk leverage-plot](outputs/figures/leverage-plot-1.png)
 
-``` r
-par(mfrow = c(1, 1))
-```
+## 9. Check relationships between predictors
 
-Do not compare R-squared across the two response scales as evidence of improved
-prediction. Inspect whether the transformed diagnostic patterns improve; the
-lambda was selected on this same sample.
-
-## Save tables and interpret the findings
+The correlation table checks whether pairs of predictors are closely related.
+Values near -1 or 1 indicate a strong linear relationship. Pay particular
+attention to ETF versus expense ratio and stock versus bond weights.
+This is an initial check; pairwise correlations do not detect every form of
+collinearity among several predictors.
 
 
 ``` r
-write.csv(coefficient_table, "outputs/ols_coefficients.csv")
-write.csv(robust_table, "outputs/hc3_coefficients.csv")
-write.csv(fit_table, "outputs/model_fit.csv", row.names = FALSE)
-write.csv(descriptive, "outputs/descriptive_statistics.csv")
-write.csv(drop1(model, test = "F"), "outputs/partial_F_tests.csv")
-write.csv(influence_table, "outputs/influence_diagnostics.csv", row.names = FALSE)
-write.csv(data.frame(Predictor = predictors, VIF = vif), "outputs/vif.csv", row.names = FALSE)
+# Remove the response from the list before calculating predictor correlations.
+predictor_columns <- model_columns[-1]
+round(cor(model_data[, predictor_columns]), 2)
 ```
 
-The complete-case sample contains 13765 funds, including
-564 ETFs. The adjusted R-squared is
-0.289. The adjusted ETF difference is
-0.414 percentage points, with HC3 95%
-interval [-0.236,
-1.064]. These are associations
-in this selected sample, conditional on the measured predictors.
+```
+##                                      etf_indicator
+## etf_indicator                                 1.00
+## fund_annual_report_net_expense_ratio         -0.23
+## total_net_assets                              0.00
+## fund_age_years                               -0.10
+## asset_stocks                                  0.12
+## asset_bonds                                  -0.09
+## annual_holdings_turnover                     -0.01
+## fund_price_earning_ratio                     -0.09
+## fund_sector_technology                       -0.05
+##                                      fund_annual_report_net_expense_ratio
+## etf_indicator                                                       -0.23
+## fund_annual_report_net_expense_ratio                                 1.00
+## total_net_assets                                                    -0.13
+## fund_age_years                                                       0.09
+## asset_stocks                                                         0.00
+## asset_bonds                                                         -0.12
+## annual_holdings_turnover                                             0.19
+## fund_price_earning_ratio                                             0.01
+## fund_sector_technology                                              -0.02
+##                                      total_net_assets fund_age_years
+## etf_indicator                                    0.00          -0.10
+## fund_annual_report_net_expense_ratio            -0.13           0.09
+## total_net_assets                                 1.00           0.09
+## fund_age_years                                   0.09           1.00
+## asset_stocks                                     0.02           0.08
+## asset_bonds                                     -0.01          -0.06
+## annual_holdings_turnover                        -0.05          -0.03
+## fund_price_earning_ratio                         0.05           0.08
+## fund_sector_technology                           0.04           0.06
+##                                      asset_stocks asset_bonds
+## etf_indicator                                0.12       -0.09
+## fund_annual_report_net_expense_ratio         0.00       -0.12
+## total_net_assets                             0.02       -0.01
+## fund_age_years                               0.08       -0.06
+## asset_stocks                                 1.00       -0.91
+## asset_bonds                                 -0.91        1.00
+## annual_holdings_turnover                    -0.11        0.03
+## fund_price_earning_ratio                     0.15       -0.15
+## fund_sector_technology                       0.14       -0.14
+##                                      annual_holdings_turnover
+## etf_indicator                                           -0.01
+## fund_annual_report_net_expense_ratio                     0.19
+## total_net_assets                                        -0.05
+## fund_age_years                                          -0.03
+## asset_stocks                                            -0.11
+## asset_bonds                                              0.03
+## annual_holdings_turnover                                 1.00
+## fund_price_earning_ratio                                -0.03
+## fund_sector_technology                                  -0.01
+##                                      fund_price_earning_ratio
+## etf_indicator                                           -0.09
+## fund_annual_report_net_expense_ratio                     0.01
+## total_net_assets                                         0.05
+## fund_age_years                                           0.08
+## asset_stocks                                             0.15
+## asset_bonds                                             -0.15
+## annual_holdings_turnover                                -0.03
+## fund_price_earning_ratio                                 1.00
+## fund_sector_technology                                   0.48
+##                                      fund_sector_technology
+## etf_indicator                                         -0.05
+## fund_annual_report_net_expense_ratio                  -0.02
+## total_net_assets                                       0.04
+## fund_age_years                                         0.06
+## asset_stocks                                           0.14
+## asset_bonds                                           -0.14
+## annual_holdings_turnover                              -0.01
+## fund_price_earning_ratio                               0.48
+## fund_sector_technology                                 1.00
+```
 
-A successful analysis reports where assumptions fail; it does not require all
-diagnostics to pass. Review residual curvature, variance, tail behavior,
-influence and VIF before proposing revisions. If prediction becomes the goal,
-add held-out evaluation, ideally splitting by underlying fund rather than
-share class. No out-of-sample accuracy is claimed here.
+## Keep in mind
 
-### Interpretation of this run
+This is the starting model. Use the diagnostics to decide what needs work
+later. Ordinary confidence intervals and hypothesis tests rely on model
+assumptions, including independent errors and constant variance.
 
-The residual plots show unequal spread and pronounced tail departures from
-normality. The variance test rejects constant variance. Emphasize the HC3
-interval for the ETF comparison: it includes zero, so this model does not
-provide clear evidence of an adjusted ETF advantage at the 5% level.
-Stock and bond VIFs are about 6.8; the ETF VIF is about 1.1. Thus the main
-collinearity concern is asset allocation, rather than the ETF indicator.
-
-The Box–Cox optimum is approximately 2.5 on gross returns. This is an
-exploratory transformation, not a standard log-return recommendation. Check
-the transformed Q-Q and variance plots before adopting it. Both models remain
-limited by predictor timing, possible shared portfolios, and selection into
-the complete-case sample. Investigate influential funds and consider category
-controls and nonlinear relationships as next steps; do not remove observations
-or add terms solely to obtain smaller p-values.
-
-Method references: [R's ANOVA documentation](https://www.stat.math.ethz.ch/R-manual/R-patched/RHOME/library/stats/html/anova.lm.html)
-and [MASS Box–Cox documentation](https://www.stat.math.ethz.ch/R-manual/R-devel/library/MASS/html/boxcox.html).
+The source files contain reporting dates from 2021, so predictor values are
+not confirmed to describe funds before 2018. Missing data and multiple share
+classes of the same fund can also affect conclusions. These limitations are
+not resolved by fitting the regression.
