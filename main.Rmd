@@ -40,11 +40,13 @@ etfs$etf_indicator <- 1
 mutualfunds$etf_indicator <- 0
 funds <- rbind(etfs, mutualfunds)
 
-# Calculate age in years at January 1, 2018
-# SERIOUS: FIX THIS YEAR CALCULATION MAY NOT BE CORRECT.
+# Calculate how long the fund has been running in years
+# before the given return year
+# Changing this essentially doesn't change slope but will
+# just change the intercept
 funds$inception_date <- as.Date(funds$inception_date)
 funds$fund_age_years <- as.numeric(
-  as.Date("2019-01-01") - funds$inception_date
+  as.Date("2018-01-01") - funds$inception_date
 ) / 365.25
 
 # Funds launched after that date have no applicable age for this analysis.
