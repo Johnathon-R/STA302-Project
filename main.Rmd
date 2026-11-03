@@ -152,7 +152,7 @@ transform the model.
 boxplot(fund_return_ytd ~ etf_indicator,
   data = model_data,
   names = c("Mutual fund", "ETF"),
-  ylab = "ytd return (decimal)", main = "ytd returns by fund type"
+  ylab = "2021 (Jan-Nov) returns (decimal)", main = "2021 (Jan-Nov) returns by fund type"
 )
 ```
 
@@ -160,7 +160,7 @@ boxplot(fund_return_ytd ~ etf_indicator,
 
 ```{r return-histogram}
 hist(model_data$fund_return_ytd,
-  xlab = "ytd return (decimal)", main = "Distribution of ytd returns"
+  xlab = "2021 (Jan-Nov) returns (decimal)", main = "Distribution of 2021 (Jan-Nov) returns"
 )
 ```
 
@@ -176,7 +176,9 @@ abline(h = 0, col = "red")
 **Residual vs response per perdictor** Large individual graphs
 
 ```{r predictor-residuals, fig.width=10, fig.height=18}
-predictor_data <- model$model[, -1]
+predictor_data <- as.data.frame(
+  model.matrix(model)[, -1, drop = FALSE]
+)
 
 # Five rows and two columns provide space for nine plots.
 par(mfrow = c(5, 2), mar = c(4, 4, 3, 1))
@@ -245,7 +247,8 @@ qqline(residuals(model), col = "red")
 ```{r residual-boxplot}
 boxplot(residuals(model) ~ model_data$etf_indicator,
   names = c("Mutual fund", "ETF"),
-  ylab = "Residual", main = "Residuals by fund type"
+  ylab = "Residual", xlab="Etf Indicator",
+  main = "Residuals by fund type"
 )
 abline(h = 0, col = "red")
 ```
