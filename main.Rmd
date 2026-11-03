@@ -43,35 +43,36 @@ filtered_etfs$etf_indicator <- 1
 filtered_mutualfunds$etf_indicator <- 0
 funds <- rbind(filtered_etfs, filtered_mutualfunds)
 
-# Calculate age in years at January 1, 2018
+# Calculate age of fund in years at January 1, 2018.
+# Since we want the age of the fund before the recorded year
 funds$inception_date <- as.Date(funds$inception_date)
 funds$fund_age_years <- as.numeric(
   as.Date("2019-01-01") - funds$inception_date
 ) / 365.25
 
-# Funds launched after that date have no applicable age for this analysis.
+# Funds launched after that date have no applicable prior age
 funds$fund_age_years[funds$fund_age_years < 0] <- NA
 
-# The model uses age, so the original date column is no longer needed
+# Remove the original inception date column
 funds$inception_date <- NULL
 
-# Check missing values before excluding incomplete rows.
+# Check missing values before excluding incomplete rows
 colSums(is.na(funds))
 
-# Keep a separate cleaned table with every model value available.
+# Keep a separate cleaned table with every model value available
 model_data <- funds[complete.cases(funds), ]
 
-# Compare counts before and after cleaning: 0 = mutual fund, 1 = ETF.
+# Compare counts before and after cleaning: 0 = mutual fund, 1 = ETF
 table(funds$etf_indicator)
 table(model_data$etf_indicator)
 ```
 
 Missing stock or bond weights are **unknown, not zero**. A row missing
 any required value is excluded from `model_data`, but remains in
-`funds`. Recorded zeros and other nonmissing values are kept. No
+`funds`. Recorded zeros and other non-missing values are kept. No
 outliers are removed and no values are filled in. The indicator and age
-are the only derived predictors; assets, P/E, weights, expenses,
-turnover and returns are unchanged.
+are the only derived predictors; all others predictors: assets, P/E, weights, 
+expenses, turnover, and returns are unchanged.
 
 ## 2. Fit the model
 
@@ -86,33 +87,38 @@ model <- lm(fund_return_2018 ~ etf_indicator +
 )
 ```
 
-```{r}
-
-summary(model)
-confint(model)  # 95% confidence intervals
-
-```
-
 The ETF coefficient compares ETFs with mutual funds while holding the
 other predictors fixed. No transformations or corrections are applied to
 this model.
 
 ## 3. Summary tables and tests
 
-```{r tables}
-summary(model_data)
+```{r}
+summary(model)
+```
 
-# Overall test: are all nine predictor coefficients zero?
+```{r}
+summary(model_data)
+```
+
+```{r}
+# 95% confidence interval
+confint(model)  
+```
+
+```{r}
+# ANOVA test
 intercept_only <- lm(fund_return_2018 ~ 1, data = model_data)
 anova(intercept_only, model)
 ```
 
 ```{r}
-
-# Test each predictor while accounting for all the others.
+# Test each predictor while accounting for all the others
 drop1(model, test = "F")
+```
 
-# The first column is the response; exclude it from predictor covariance.
+```{r}
+# The first column is the response; exclude it from predictor covariance
 covariance_matrix <- cov(model_data[, -1])
 knitr::kable(signif(covariance_matrix, 4))
 ```
@@ -143,8 +149,7 @@ hist(model_data$fund_return_2018,
      xlab = "2018 return (decimal)", main = "Distribution of 2018 returns")
 ```
 
-**Residual plot:** look for scatter around zero with no curve or funnel
-shape.
+**Residual plot:** 
 
 ```{r residual-plot}
 plot(fitted(model), residuals(model),
@@ -152,7 +157,7 @@ plot(fitted(model), residuals(model),
 abline(h = 0, col = "red")
 ```
 
-**Residual vs response per perdictor**
+**Residual vs response per perdictor** Large individual graphs
 
 ```{r predictor-residuals, fig.width=10, fig.height=18}
 predictor_data <- model$model[, -1]
@@ -175,7 +180,7 @@ for (predictor in names(predictor_data)) {
 par(mfrow = c(1, 1))
 ```
 
-**Residuals for predictor:** In this format
+**Residuals for predictor:** Matrix format
 
 ```{r residual-pairs, fig.width=16, fig.height=16}
 # Get the predictors used in the model.
@@ -213,15 +218,14 @@ pairs(
 )
 ```
 
-**Normal Q-Q plot:** points close to the line support approximately
-normal errors; departures at the ends suggest unusual tails.
+**Normal Q-Q plot:**
 
 ```{r qq-plot}
 qqnorm(residuals(model), main = "Normal Q-Q plot of residuals")
 qqline(residuals(model), col = "red")
 ```
 
-**Residual boxplot:** compare the spread of errors between fund types.
+**Residual boxplot:** to compare the spread of errors between fund types
 
 ```{r residual-boxplot}
 boxplot(residuals(model) ~ model_data$etf_indicator,
