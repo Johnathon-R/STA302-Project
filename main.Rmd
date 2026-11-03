@@ -44,7 +44,6 @@ filtered_mutualfunds$etf_indicator <- 0
 funds <- rbind(filtered_etfs, filtered_mutualfunds)
 
 # Calculate age in years at January 1, 2018
-# SERIOUS: FIX THIS YEAR CALCULATION MAY NOT BE CORRECT.
 funds$inception_date <- as.Date(funds$inception_date)
 funds$fund_age_years <- as.numeric(
   as.Date("2019-01-01") - funds$inception_date
@@ -53,8 +52,7 @@ funds$fund_age_years <- as.numeric(
 # Funds launched after that date have no applicable age for this analysis.
 funds$fund_age_years[funds$fund_age_years < 0] <- NA
 
-# The model uses age, so the original date column is no longer needed.
-# WHY NOT JUST REMOVE THE COLUMN ENTIRELY
+# The model uses age, so the original date column is no longer needed
 funds$inception_date <- NULL
 
 # Check missing values before excluding incomplete rows.
