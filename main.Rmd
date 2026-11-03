@@ -28,7 +28,7 @@ etfs <- read.csv("data/ETFs.csv", na.strings = c("", "NA"))
 mutualfunds <- read.csv("data/MutualFunds.csv", na.strings = c("", "NA"))
 ```
 
-Keep the 2018 return and the columns needed for the nine predictors.
+Keep the ytd return and the columns needed for the nine predictors.
 Blank entries are treated as missing (`NA`).
 
 ```{r clean-data}
@@ -63,9 +63,6 @@ funds <- funds %>%
 funds$fund_age_years <- as.numeric(
   as.Date("2021-01-01") - funds$inception_date
 ) / 365.25
-
-# Funds launched after that date have no applicable prior age
-funds$fund_age_years[funds$fund_age_years < 0] <- NA
 
 # Remove the original inception date column
 funds$inception_date <- NULL
@@ -107,6 +104,39 @@ this model.
 
 ```{r}
 summary(model)
+```
+
+```{r design-matrix}
+# Design matrix
+X <- model.matrix(model)
+
+# Standardized third moment: positive = right skew,
+# negative = left skew. Undefined for constant columns
+skewness <- function(x) {
+  spread <- sqrt(mean((x - mean(x))^2))
+  if (spread == 0) return(NA_real_)
+  mean(((x - mean(x)) / spread)^3)
+}
+
+design_summary <- X[, colnames(X) != "(Intercept)", drop = FALSE] %>%
+  as.data.frame() %>%
+  pivot_longer(
+    everything(),
+    names_to = "variable",
+    values_to = "value"
+  ) %>%
+  group_by(variable) %>%
+  summarise(
+    mean = mean(value),
+    median = median(value),
+    SD = sd(value),
+    min = min(value),
+    max = max(value),
+    skewness = skewness(value),
+    .groups = "drop"
+  )
+
+knitr::kable(design_summary, digits = 3)
 ```
 
 ```{r}
@@ -252,9 +282,3 @@ boxplot(residuals(model) ~ model_data$etf_indicator,
 )
 abline(h = 0, col = "red")
 ```
-
-## Notes for later
-
-Excluding missing values can change which funds are represented. Also,
-the files contain 2021 reporting dates, so predictor measurements are
-not confirmed as pre-2018.
