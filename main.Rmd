@@ -7,7 +7,7 @@ editor_options:
     wrap: 72
 ---
 
-# Prior
+# Prior to running any code
 
 Please download the data from https://www.kaggle.com/datasets/stefanoleone992/mutual-funds-and-etfs,
 and store the file within a data/ folder in the working directory.
