@@ -13,6 +13,11 @@ Please download the data from https://www.kaggle.com/datasets/stefanoleone992/mu
 and store the file within a data/ folder in the working directory.
 If the data is already stored then please skip this step.
 
+```{r}
+library(tidyverse)
+library(dplyr)
+```
+
 ## 1. Load and clean the data
 
 Read only the two fund files.
@@ -29,7 +34,7 @@ Blank entries are treated as missing (`NA`).
 ```{r clean-data}
 # Columns to keep for regression
 columns <- c(
-  "fund_return_2018",
+  "fund_return_ytd",
   "fund_annual_report_net_expense_ratio",
   "total_net_assets",
   "inception_date",
@@ -49,11 +54,14 @@ filtered_etfs$etf_indicator <- 1
 filtered_mutualfunds$etf_indicator <- 0
 funds <- rbind(filtered_etfs, filtered_mutualfunds)
 
-# Calculate age of fund in years at January 1, 2018.
-# Since we want the age of the fund before the recorded year
-funds$inception_date <- as.Date(funds$inception_date)
+# Filter for funds only created before 2021
+funds <- funds %>% 
+  mutate(inception_date = as.Date(inception_date)) %>%
+  filter(inception_date < as.Date("2021-01-01"))
+
+# Convert running age into a continuous variable
 funds$fund_age_years <- as.numeric(
-  as.Date("2018-01-01") - funds$inception_date
+  as.Date("2021-01-01") - funds$inception_date
 ) / 365.25
 
 # Funds launched after that date have no applicable prior age
@@ -83,8 +91,7 @@ expenses, turnover, and returns are unchanged.
 ## 2. Fit the model
 
 ```{r regression}
-model <- lm(
-  fund_return_2018 ~ total_net_assets +
+model <- lm(fund_return_ytd ~ total_net_assets +
     fund_age_years + asset_stocks + asset_bonds +
     annual_holdings_turnover + fund_price_earning_ratio +
     fund_sector_technology + fund_annual_report_net_expense_ratio * etf_indicator,
@@ -113,7 +120,7 @@ confint(model)
 
 ```{r}
 # ANOVA test
-intercept_only <- lm(fund_return_2018 ~ 1, data = model_data)
+intercept_only <- lm(fund_return_ytd ~ 1, data = model_data)
 anova(intercept_only, model)
 ```
 
@@ -142,18 +149,18 @@ transform the model.
 **Boxplot:** compare returns between ETFs and mutual funds.
 
 ```{r return-boxplot}
-boxplot(fund_return_2018 ~ etf_indicator,
+boxplot(fund_return_ytd ~ etf_indicator,
   data = model_data,
   names = c("Mutual fund", "ETF"),
-  ylab = "2018 return (decimal)", main = "2018 returns by fund type"
+  ylab = "ytd return (decimal)", main = "ytd returns by fund type"
 )
 ```
 
 **Histogram:** examine the distribution of returns.
 
 ```{r return-histogram}
-hist(model_data$fund_return_2018,
-  xlab = "2018 return (decimal)", main = "Distribution of 2018 returns"
+hist(model_data$fund_return_ytd,
+  xlab = "ytd return (decimal)", main = "Distribution of ytd returns"
 )
 ```
 
