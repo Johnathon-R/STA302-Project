@@ -7,6 +7,12 @@ editor_options:
     wrap: 72
 ---
 
+# Prior
+
+Please download the data from https://www.kaggle.com/datasets/stefanoleone992/mutual-funds-and-etfs,
+and store the file within a data/ folder in the working directory.
+If the data is already stored then please skip this step.
+
 ## 1. Load and clean the data
 
 Read only the two fund files.
