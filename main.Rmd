@@ -83,12 +83,11 @@ expenses, turnover, and returns are unchanged.
 ## 2. Fit the model
 
 ```{r regression}
-model <- lm(fund_return_2018 ~ etf_indicator +
-    fund_annual_report_net_expense_ratio +
-    total_net_assets + fund_age_years +
-    asset_stocks + asset_bonds +
+model <- lm(
+  fund_return_2018 ~ total_net_assets +
+    fund_age_years + asset_stocks + asset_bonds +
     annual_holdings_turnover + fund_price_earning_ratio +
-    fund_sector_technology,
+    fund_sector_technology + fund_annual_report_net_expense_ratio * etf_indicator,
   data = model_data
 )
 ```
@@ -109,7 +108,7 @@ summary(model_data)
 
 ```{r}
 # 95% confidence interval
-confint(model)  
+confint(model)
 ```
 
 ```{r}
@@ -143,23 +142,27 @@ transform the model.
 **Boxplot:** compare returns between ETFs and mutual funds.
 
 ```{r return-boxplot}
-boxplot(fund_return_2018 ~ etf_indicator, data = model_data,
-        names = c("Mutual fund", "ETF"),
-        ylab = "2018 return (decimal)", main = "2018 returns by fund type")
+boxplot(fund_return_2018 ~ etf_indicator,
+  data = model_data,
+  names = c("Mutual fund", "ETF"),
+  ylab = "2018 return (decimal)", main = "2018 returns by fund type"
+)
 ```
 
 **Histogram:** examine the distribution of returns.
 
 ```{r return-histogram}
 hist(model_data$fund_return_2018,
-     xlab = "2018 return (decimal)", main = "Distribution of 2018 returns")
+  xlab = "2018 return (decimal)", main = "Distribution of 2018 returns"
+)
 ```
 
 **Residual plot:** 
 
 ```{r residual-plot}
 plot(fitted(model), residuals(model),
-     xlab = "Fitted return", ylab = "Residual", main = "Residuals versus fitted")
+  xlab = "Fitted return", ylab = "Residual", main = "Residuals versus fitted"
+)
 abline(h = 0, col = "red")
 ```
 
@@ -207,7 +210,6 @@ pairs(
   cex = 0.3,
   col = adjustcolor("black", alpha.f = 0.3),
   main = "Predictors and residuals",
-
   panel = function(x, y, ...) {
     points(x, y, ...)
 
@@ -235,8 +237,9 @@ qqline(residuals(model), col = "red")
 
 ```{r residual-boxplot}
 boxplot(residuals(model) ~ model_data$etf_indicator,
-        names = c("Mutual fund", "ETF"),
-        ylab = "Residual", main = "Residuals by fund type")
+  names = c("Mutual fund", "ETF"),
+  ylab = "Residual", main = "Residuals by fund type"
+)
 abline(h = 0, col = "red")
 ```
 
