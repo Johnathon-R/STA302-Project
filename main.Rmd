@@ -55,7 +55,7 @@ filtered_mutualfunds$etf_indicator <- 0
 funds <- rbind(filtered_etfs, filtered_mutualfunds)
 
 # Filter for funds only created before 2021
-funds <- funds %>% 
+funds <- funds %>%
   mutate(inception_date = as.Date(inception_date)) %>%
   filter(inception_date < as.Date("2021-01-01"))
 
@@ -88,10 +88,12 @@ expenses, turnover, and returns are unchanged.
 ## 2. Fit the model
 
 ```{r regression}
-model <- lm(fund_return_ytd ~ total_net_assets +
+model <- lm(
+  fund_return_ytd ~ total_net_assets +
     fund_age_years + asset_stocks + asset_bonds +
     annual_holdings_turnover + fund_price_earning_ratio +
-    fund_sector_technology + fund_annual_report_net_expense_ratio * etf_indicator,
+    fund_sector_technology +
+    fund_annual_report_net_expense_ratio * etf_indicator,
   data = model_data
 )
 ```
@@ -114,7 +116,9 @@ X <- model.matrix(model)
 # negative = left skew. Undefined for constant columns
 skewness <- function(x) {
   spread <- sqrt(mean((x - mean(x))^2))
-  if (spread == 0) return(NA_real_)
+  if (spread == 0) {
+    return(NA_real_)
+  }
   mean(((x - mean(x)) / spread)^3)
 }
 
@@ -182,7 +186,8 @@ transform the model.
 boxplot(fund_return_ytd ~ etf_indicator,
   data = model_data,
   names = c("Mutual fund", "ETF"),
-  ylab = "2021 (Jan-Nov) returns (decimal)", main = "2021 (Jan-Nov) returns by fund type"
+  ylab = "2021 (Jan-Nov) returns (decimal)", 
+  main = "2021 (Jan-Nov) returns by fund type"
 )
 ```
 
@@ -190,7 +195,8 @@ boxplot(fund_return_ytd ~ etf_indicator,
 
 ```{r return-histogram}
 hist(model_data$fund_return_ytd,
-  xlab = "2021 (Jan-Nov) returns (decimal)", main = "Distribution of 2021 (Jan-Nov) returns"
+  xlab = "2021 (Jan-Nov) returns (decimal)", 
+  main = "Distribution of 2021 (Jan-Nov) returns"
 )
 ```
 
@@ -277,7 +283,7 @@ qqline(residuals(model), col = "red")
 ```{r residual-boxplot}
 boxplot(residuals(model) ~ model_data$etf_indicator,
   names = c("Mutual fund", "ETF"),
-  ylab = "Residual", xlab="Etf Indicator",
+  ylab = "Residual", xlab = "Etf Indicator",
   main = "Residuals by fund type"
 )
 abline(h = 0, col = "red")
