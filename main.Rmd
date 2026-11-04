@@ -105,7 +105,18 @@ this model.
 ## 3. Summary tables and tests
 
 ```{r}
+# Describe fitted model
 summary(model)
+```
+```{r}
+# Describe cleaned dataset including potentially unused observations
+summary(model_data)
+```
+
+```{r}
+# The response and predictors for the exact observations
+# used within the regression
+summary(model.frame(model))
 ```
 
 ```{r design-matrix}
@@ -141,10 +152,6 @@ design_summary <- X[, colnames(X) != "(Intercept)", drop = FALSE] %>%
   )
 
 knitr::kable(design_summary, digits = 3)
-```
-
-```{r}
-summary(model_data)
 ```
 
 ```{r}
@@ -237,33 +244,51 @@ par(mfrow = c(1, 1))
 **Residuals for predictor:** Matrix format
 
 ```{r residual-pairs, fig.width=16, fig.height=16}
-# Get the predictors used in the model.
-plot_data <- model$model[, -1]
+# Get all model terms, including the interaction, without the intercept
+plot_data <- as.data.frame(
+  model.matrix(model)[, -1, drop = FALSE]
+)
 
-# Add the residuals as the last column.
+# Add residuals as the last column
 plot_data$Residuals <- residuals(model)
 
-# Short labels make the plots easier to read.
-names(plot_data) <- c(
-  "ETF", "Expense", "Assets", "Age", "Stocks",
-  "Bonds", "Turnover", "P/E", "Technology", "Residuals"
+# Match short labels to the actual column names
+short_labels <- c(
+  total_net_assets = "Assets",
+  fund_age_years = "Age",
+  asset_stocks = "Stocks",
+  asset_bonds = "Bonds",
+  annual_holdings_turnover = "Turnover",
+  fund_price_earning_ratio = "P/E",
+  fund_sector_technology = "Technology",
+  fund_annual_report_net_expense_ratio = "Expense",
+  etf_indicator = "ETF",
+  "fund_annual_report_net_expense_ratio:etf_indicator" = "Expense × ETF",
+  "etf_indicator:fund_annual_report_net_expense_ratio" = "Expense × ETF",
+  Residuals = "Residuals"
 )
+
+# Keep original names if a column has no matching short label
+labels <- names(plot_data)
+matched <- labels %in% names(short_labels)
+labels[matched] <- unname(short_labels[labels[matched]])
 
 pairs(
   plot_data,
+  labels = labels,
   pch = 1,
   cex = 0.3,
   col = adjustcolor("black", alpha.f = 0.3),
-  main = "Predictors and residuals",
+  main = "Predictors, interaction, and residuals",
   panel = function(x, y, ...) {
     points(x, y, ...)
 
-    # Residuals on the vertical axis: horizontal zero line.
+    # Residuals on the vertical axis: horizontal zero line
     if (par("mfg")[1] == ncol(plot_data)) {
       abline(h = 0, col = "red", lwd = 2)
     }
 
-    # Residuals on the horizontal axis: vertical zero line.
+    # Residuals on the horizontal axis: vertical zero line
     if (par("mfg")[2] == ncol(plot_data)) {
       abline(v = 0, col = "red", lwd = 2)
     }
