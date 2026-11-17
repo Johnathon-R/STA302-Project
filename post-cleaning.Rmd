@@ -10,6 +10,26 @@ editor_options:
 
 We aim to fix all the issues that we're previously present within our model.
 
-```{r}
+## Diversification score
 
+Run this after `funds` has been created in `main.Rmd`. The ETF data has
+stock and bond weights but not the other individual asset weights, so
+we combine all remaining assets into one group for both fund types.
+The score is 0 when all assets are in one group and rises as the three
+groups become more evenly weighted.
+
+```{r diversification}
+library(dplyr)
+
+funds <- funds %>%
+  mutate(
+    diversification = 1 - (
+      asset_stocks^2 +
+      asset_bonds^2 +
+      (1 - asset_stocks - asset_bonds)^2
+    )
+  )
 ```
+
+To use this predictor, replace `asset_stocks + asset_bonds` with
+`diversification` in the model formula.
