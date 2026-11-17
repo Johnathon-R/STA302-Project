@@ -6,30 +6,108 @@ editor_options:
     wrap: 72
 ---
 
-# Goal
+```{r}
+# Assumes etfs, mutualfunds, and tidyverse are already loaded.
+# bind_rows keeps columns unique to either dataset and fills the other rows with NA.
+funds <- bind_rows(
+  etfs %>% mutate(etf_indicator = 1L),
+  mutualfunds %>% mutate(etf_indicator = 0L)
+)
 
-We aim to fix all the issues that we're previously present within our model.
+# Keep fund YTD, 1-year, 2021 quarterly, and the requested YTD price field.
+keep_returns <- c(
+  "fund_return_ytd", "fund_return_1year", "year_to_date_return",
+  paste0("fund_return_2021_q", 1:4)
+)
+drop_returns <- setdiff(
+  grep("return", names(funds), value = TRUE),
+  c(keep_returns, "returns_as_of_date")
+)
 
-## Diversification score
-
-Run this after `funds` has been created in `main.Rmd`. The ETF data has
-stock and bond weights but not the other individual asset weights, so
-we combine all remaining assets into one group for both fund types.
-The score is 0 when all assets are in one group and rises as the three
-groups become more evenly weighted.
-
-```{r diversification}
-library(dplyr)
+# Remove predictors based on trailing days, weeks, months, or years.
+drop_time <- grep(
+  paste0(
+    "^(avg_vol_|day[0-9]+_moving_average$|week[0-9]+_|",
+    "years_(up|down)$|quarters_(up|down)$|",
+    "fund_(alpha|beta|r_squared|stdev|sharpe_ratio|treynor_ratio)_[0-9]+years$|",
+    "(fund|category)_year[0-9]+_|annual_holdings_turnover$)"
+  ),
+  names(funds), value = TRUE
+)
 
 funds <- funds %>%
+  # These columns are constant or duplicate the ETF indicator.
+  select(-currency, -region, -exchange_timezone,
+         -fund_bonds_us_government, -quote_type,
+         -all_of(drop_returns), -all_of(drop_time)) %>%
+  mutate(inception_date = as.Date(inception_date)) %>%
+  filter(inception_date < as.Date("2021-01-01")) %>%
   mutate(
+    # Shared three-group score for comparing ETFs with mutual funds.
+    diversification_broad = 1 - (
+      asset_stocks^2 + asset_bonds^2 +
+        (1 - asset_stocks - asset_bonds)^2
+    ),
+    # All six weights are reported only for mutual funds; ETF scores are NA.
     diversification = 1 - (
-      asset_stocks^2 +
-      asset_bonds^2 +
-      (1 - asset_stocks - asset_bonds)^2
+      asset_cash^2 + asset_stocks^2 + asset_bonds^2 +
+        asset_others^2 + asset_preferred^2 + asset_convertible^2
     )
   )
+
 ```
 
-To use this predictor, replace `asset_stocks + asset_bonds` with
-`diversification` in the model formula.
+```{r}
+
+# lm drops rows missing a variable in this formula, not rows missing other columns.
+# year_to_date_return stays in funds but nearly duplicates fund_return_ytd.
+model <- lm(
+  fund_return_ytd ~ total_net_assets + diversification_broad +
+    fund_price_earning_ratio + fund_sector_technology +
+    fund_annual_report_net_expense_ratio * etf_indicator,
+  data = funds
+)
+
+model_data <- model.frame(model)
+table(funds$etf_indicator)
+table(model_data$etf_indicator)
+summary(model)
+```
+
+```{r diagnostic-plots, fig.width=10, fig.height=8}
+# Linearity, normality, constant variance, and influential observations.
+old_par <- par(mfrow = c(2, 2))
+plot(model, which = c(1, 2, 3, 5))
+par(old_par)
+```
+
+```{r predictor-residual-plots, fig.width=12, fig.height=10}
+# Plot residuals against every model term, including the interaction.
+predictors <- model.matrix(model)[, -1, drop = FALSE]
+plot_names <- c(
+  total_net_assets = "Net assets",
+  diversification_broad = "Diversification",
+  fund_price_earning_ratio = "P/E ratio",
+  fund_sector_technology = "Technology weight",
+  fund_annual_report_net_expense_ratio = "Expense ratio",
+  etf_indicator = "ETF indicator",
+  `fund_annual_report_net_expense_ratio:etf_indicator` = "Expense ratio x ETF"
+)
+
+old_par <- par(mfrow = c(3, 3), mar = c(4, 4, 3, 1))
+for (term in colnames(predictors)) {
+  x <- predictors[, term]
+  y <- residuals(model)
+  label <- if (term %in% names(plot_names)) plot_names[[term]] else term
+
+  if (length(unique(x)) == 2) {
+    boxplot(y ~ x, main = label, xlab = label, ylab = "Residuals")
+  } else {
+    plot(x, y, main = label, xlab = label, ylab = "Residuals",
+         pch = 16, cex = 0.4, col = adjustcolor("black", alpha.f = 0.15))
+    lines(lowess(x, y), col = "blue", lwd = 2)
+  }
+  abline(h = 0, col = "red", lty = 2)
+}
+par(old_par)
+```
