@@ -9,13 +9,15 @@ editor_options:
 
 # Prior to running any code
 
-Please download the data from https://www.kaggle.com/datasets/stefanoleone992/mutual-funds-and-etfs,
-and store the file within a data/ folder in the working directory.
-If the data is already stored then please skip this step.
+Please download the data from
+<https://www.kaggle.com/datasets/stefanoleone992/mutual-funds-and-etfs>,
+and store the file within a data/ folder in the working directory. If
+the data is already stored then please skip this step.
 
 ```{r}
 library(tidyverse)
 library(dplyr)
+source('tools.R')
 ```
 
 ## 1. Load and clean the data
@@ -24,15 +26,31 @@ Read only the two fund files.
 
 ```{r load-data}
 # Read in the dataset
-etfs <- read.csv("data/ETFs.csv", na.strings = c("", "NA"))
-mutualfunds <- read.csv("data/MutualFunds.csv", na.strings = c("", "NA"))
+etfs <- read.csv("ETFs.csv", na.strings = c("", "NA"))
+mutualfunds <- read.csv("MutualFunds.csv", na.strings = c("", "NA"))
 ```
 
 Keep the ytd return and the columns needed for the nine predictors.
 Blank entries are treated as missing (`NA`).
 
 ```{r clean-data}
-# Columns to keep for regression
+
+#---------------------------------------------
+# 1.1. Impute missing asset allocations
+#---------------------------------------------
+
+# ETFs
+etf_asset_cols <- grep("^asset_", names(etfs), value = TRUE)
+etfs <- impute_allocation(etfs, etf_asset_cols)
+
+# Mutual funds
+mutual_fund_asset_cols <- grep("^asset_", names(mutualfunds), value = TRUE)
+mutualfunds <- impute_allocation(mutualfunds, mutual_fund_asset_cols)
+
+#---------------------------------------------
+# 1.2. Select regression columns
+#---------------------------------------------
+
 columns <- c(
   "fund_return_ytd",
   "fund_annual_report_net_expense_ratio",
@@ -45,45 +63,103 @@ columns <- c(
   "fund_sector_technology"
 )
 
-# Filter the columns but keep all rows
 filtered_etfs <- etfs[, columns]
 filtered_mutualfunds <- mutualfunds[, columns]
 
-# Create indicator variable for etf and mutual fund
+
+#---------------------------------------------
+# 1.3. Combine datasets
+#---------------------------------------------
+
 filtered_etfs$etf_indicator <- 1
 filtered_mutualfunds$etf_indicator <- 0
+
 funds <- rbind(filtered_etfs, filtered_mutualfunds)
 
-# Filter for funds only created before 2021
+
+#---------------------------------------------
+# 1.4. Fill remaining missing ETF assets with 0
+#---------------------------------------------
+
+all_assets <- grep("^asset_", names(funds), value = TRUE)
+
+# Exclude stocks and bonds
+non_etf_assets <- setdiff(
+  all_assets,
+  c("asset_stocks", "asset_bonds")
+)
+
+for (col in non_etf_assets) {
+  target_rows <- funds$etf_indicator == 1 & is.na(funds[[col]])
+  funds[target_rows, col] <- 0
+}
+
+
+#---------------------------------------------
+# 1.5. data engineering
+#---------------------------------------------
+
+# create fund age
 funds <- funds %>%
   mutate(inception_date = as.Date(inception_date)) %>%
   filter(inception_date < as.Date("2021-01-01"))
 
-# Convert running age into a continuous variable
 funds$fund_age_years <- as.numeric(
   as.Date("2021-01-01") - funds$inception_date
 ) / 365.25
 
-# Remove the original inception date column
 funds$inception_date <- NULL
 
-# Check missing values before excluding incomplete rows
+# Represent P/E availability while retaining rows with a missing raw P/E
+pe <- funds$fund_price_earning_ratio
+pe_median <- median(pe, na.rm = TRUE)
+
+funds$pe_reported <- as.integer(!is.na(pe))
+
+funds$pe_centered_when_reported <-
+  (ifelse(is.na(pe), pe_median, pe)) - pe_median
+
+
+#---------------------------------------------
+# 1.6. Remove incomplete observations
+#---------------------------------------------
+
 colSums(is.na(funds))
 
-# Keep a separate cleaned table with every model value available
-model_data <- funds[complete.cases(funds), ]
+model_data <- funds[, !names(funds) %in% "fund_price_earning_ratio"]
+model_data <- model_data[complete.cases(model_data), ]
 
-# Compare counts before and after cleaning: 0 = mutual fund, 1 = ETF
+# Compare observations before and after cleaning
 table(funds$etf_indicator)
 table(model_data$etf_indicator)
+
 ```
+
+**Important:** This assumes your asset allocation columns sum to 1. The
+imputation only fills rows with exactly one missing asset value;
+remaining ETF NAs become zero, while remaining mutual fund NAs are
+retained for `complete.cases()` to handle.
 
 Missing stock or bond weights are **unknown, not zero**. A row missing
 any required value is excluded from `model_data`, but remains in
 `funds`. Recorded zeros and other non-missing values are kept. No
 outliers are removed and no values are filled in. The indicator and age
-are the only derived predictors; all others predictors: assets, P/E, weights, 
-expenses, turnover, and returns are unchanged.
+are the only derived predictors; all others predictors: assets, P/E,
+weights, expenses, turnover, and returns are unchanged.
+
+```{r}
+#---------------------------------------------
+# 1.7. General observations
+#---------------------------------------------
+# percent dropped
+percent_dropped <- (abs(nrow(funds) - nrow(model_data)) / nrow(funds)) * 100
+percent_dropped
+```
+
+By performing listwise deletion on all the NaN values, we drop 38.99% of our data,
+a substantial portion. Hence creating bias towards certain fund, so we should try 
+and mitigate it. To do so we will target the highly impacted columns, useing some
+cleaning strategies.
 
 ## 2. Fit the model
 
@@ -97,7 +173,7 @@ model <- lm(fund_return_ytd ~ total_net_assets +
 )
 ```
 
-The ETF coefficient compares ETFs with mutual funds while holding the
+The ETF coefficient compares etfs with mutual funds while holding the
 other predictors fixed. No transformations or corrections are applied to
 this model.
 
@@ -107,6 +183,7 @@ this model.
 # Describe fitted model
 summary(model)
 ```
+
 ```{r}
 # Describe cleaned dataset including potentially unused observations
 summary(model_data)
@@ -177,7 +254,7 @@ These plots use the original returns and ordinary residuals. A residual
 is observed return minus fitted return; calculating it does not
 transform the model.
 
-**Boxplot:** compare returns between ETFs and mutual funds.
+**Boxplot:** compare returns between etfs and mutual funds.
 
 ```{r return-boxplot}
 boxplot(fund_return_ytd ~ etf_indicator,
@@ -197,7 +274,7 @@ hist(model_data$fund_return_ytd,
 )
 ```
 
-**Residual plot:** 
+**Residual plot:**
 
 ```{r residual-plot}
 plot(fitted(model), residuals(model),
