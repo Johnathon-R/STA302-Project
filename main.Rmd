@@ -26,8 +26,8 @@ Read only the two fund files.
 
 ```{r load-data}
 # Read in the dataset
-etfs <- read.csv("ETFs.csv", na.strings = c("", "NA"))
-mutualfunds <- read.csv("MutualFunds.csv", na.strings = c("", "NA"))
+etfs <- read.csv("data/ETFs.csv", na.strings = c("", "NA"))
+mutualfunds <- read.csv("data/MutualFunds.csv", na.strings = c("", "NA"))
 ```
 
 Keep the ytd return and the columns needed for the nine predictors.
@@ -166,8 +166,8 @@ cleaning strategies.
 ```{r regression}
 model <- lm(fund_return_ytd ~ total_net_assets +
     fund_age_years + asset_stocks + asset_bonds +
-    annual_holdings_turnover + fund_price_earning_ratio +
-    fund_sector_technology +
+    annual_holdings_turnover +
+    fund_sector_technology + pe_reported + pe_centered_when_reported + 
     fund_annual_report_net_expense_ratio * etf_indicator,
   data = model_data
 )
