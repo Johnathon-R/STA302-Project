@@ -13,4 +13,7 @@ outputs/
 
 Status1_0.md
 
-workflows/
+workflows/*
+!workflows/fit_fund_models.R
+!workflows/fund_model_reasoning.pdf
+!workflows/_build_fund_model_pdf.py
