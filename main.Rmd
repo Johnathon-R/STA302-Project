@@ -18,6 +18,7 @@ the data is already stored then please skip this step.
 library(tidyverse)
 library(dplyr)
 library(car)
+library(writexl)
 source('tools.R')
 ```
 
@@ -420,10 +421,28 @@ subset(diagnostics, flags == 3)
 ```
 
 ```{r}
+temp_model_data <- cbind(
+  position = seq_len(nobs(model)),
+  original_row = rownames(model.frame(model)),
+  model.frame(model),
+  diagnostics)
+
+write_xlsx(temp_model_data, "model_data.xlsx")
+
+```
+
+```{r}
 which(abs(dfits) > 2*sqrt((p)/n))
 which(abs(db) > 2 / sqrt(n))
 which(cd > qf(0.5, p+1, n-p-1)) 
 vif(model) # check multicolinearity
+```
+
+```{r}
+
+checks <- check_model(model, point_cex = 1.5)
+
+checks$diagnostics
 ```
 
 
