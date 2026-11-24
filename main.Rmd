@@ -252,138 +252,6 @@ the table.
 
 ## 4. Graphs
 
-These plots use the original returns and ordinary residuals. A residual
-is observed return minus fitted return; calculating it does not
-transform the model.
-
-**Boxplot:** compare returns between etfs and mutual funds.
-
-```{r return-boxplot}
-boxplot(fund_return_ytd ~ etf_indicator,
-  data = model_data,
-  names = c("Mutual fund", "ETF"),
-  ylab = "2021 (Jan-Nov) returns (decimal)", 
-  main = "2021 (Jan-Nov) returns by fund type"
-)
-```
-
-**Histogram:** examine the distribution of returns.
-
-```{r return-histogram}
-hist(model_data$fund_return_ytd,
-  xlab = "2021 (Jan-Nov) returns (decimal)", 
-  main = "Distribution of 2021 (Jan-Nov) returns"
-)
-```
-
-**Residual plot:**
-
-```{r residual-plot}
-plot(fitted(model), residuals(model),
-  xlab = "Fitted return", ylab = "Residual", main = "Residuals versus fitted"
-)
-abline(h = 0, col = "red")
-```
-
-**Residual vs response per perdictor** Large individual graphs
-
-```{r predictor-residuals, fig.width=10, fig.height=18}
-predictor_data <- as.data.frame(
-  model.matrix(model)[, -1, drop = FALSE]
-)
-
-# Five rows and two columns provide space for nine plots.
-par(mfrow = c(5, 2), mar = c(4, 4, 3, 1))
-
-for (predictor in names(predictor_data)) {
-  plot(
-    predictor_data[[predictor]],
-    residuals(model),
-    xlab = predictor,
-    ylab = "Residual",
-    pch = 20,
-    cex.lab = 0.8
-  )
-  abline(h = 0, col = "red")
-}
-
-par(mfrow = c(1, 1))
-```
-
-**Residuals for predictor:** Matrix format
-
-```{r residual-pairs, fig.width=16, fig.height=16}
-# Get all model terms, including the interaction, without the intercept
-plot_data <- as.data.frame(
-  model.matrix(model)[, -1, drop = FALSE]
-)
-
-# Add residuals as the last column
-plot_data$Residuals <- residuals(model)
-
-# Match short labels to the actual column names
-short_labels <- c(
-  total_net_assets = "Assets",
-  fund_age_years = "Age",
-  asset_stocks = "Stocks",
-  asset_bonds = "Bonds",
-  annual_holdings_turnover = "Turnover",
-  fund_price_earning_ratio = "P/E",
-  fund_sector_technology = "Technology",
-  fund_annual_report_net_expense_ratio = "Expense",
-  etf_indicator = "ETF",
-  "fund_annual_report_net_expense_ratio:etf_indicator" = "Expense × ETF",
-  "etf_indicator:fund_annual_report_net_expense_ratio" = "Expense × ETF",
-  Residuals = "Residuals"
-)
-
-# Keep original names if a column has no matching short label
-labels <- names(plot_data)
-matched <- labels %in% names(short_labels)
-labels[matched] <- unname(short_labels[labels[matched]])
-
-pairs(
-  plot_data,
-  labels = labels,
-  pch = 1,
-  cex = 0.3,
-  col = adjustcolor("black", alpha.f = 0.3),
-  main = "Predictors, interaction, and residuals",
-  panel = function(x, y, ...) {
-    points(x, y, ...)
-
-    # Residuals on the vertical axis: horizontal zero line
-    if (par("mfg")[1] == ncol(plot_data)) {
-      abline(h = 0, col = "red", lwd = 2)
-    }
-
-    # Residuals on the horizontal axis: vertical zero line
-    if (par("mfg")[2] == ncol(plot_data)) {
-      abline(v = 0, col = "red", lwd = 2)
-    }
-  }
-)
-```
-
-**Normal Q-Q plot:**
-
-```{r qq-plot}
-qqnorm(residuals(model), main = "Normal Q-Q plot of residuals")
-qqline(residuals(model), col = "red")
-```
-
-**Residual boxplot:** to compare the spread of errors between fund types
-
-```{r residual-boxplot}
-boxplot(residuals(model) ~ model_data$etf_indicator,
-  names = c("Mutual fund", "ETF"),
-  ylab = "Residual", xlab = "Etf Indicator",
-  main = "Residuals by fund type"
-)
-abline(h = 0, col = "red")
-```
-
-
 ```{r}
 n <- nobs(model)
 p <- model$rank
@@ -438,7 +306,7 @@ which(cd > qf(0.5, p+1, n-p-1))
 vif(model) # check multicolinearity
 ```
 
-```{r}
+```{r, fig.width=10, fig.height=5}
 
 checks <- check_model(model, point_cex = 1.5)
 
