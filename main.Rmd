@@ -137,11 +137,6 @@ table(model_data$etf_indicator)
 
 ```
 
-**Important:** This assumes your asset allocation columns sum to 1. The
-imputation only fills rows with exactly one missing asset value;
-remaining ETF NAs become zero, while remaining mutual fund NAs are
-retained for `complete.cases()` to handle.
-
 Missing stock or bond weights are **unknown, not zero**. A row missing
 any required value is excluded from `model_data`, but remains in
 `funds`. Recorded zeros and other non-missing values are kept. No
@@ -263,11 +258,6 @@ h <- hatvalues(model)
 ```
 
 ```{r}
-dfbetas(model)[cd, ]
-model.frame(model)[cd, ]
-```
-
-```{r}
 diagnostics <- data.frame(
   cooks = cd,
   dffits = dfits,
@@ -284,7 +274,6 @@ diagnostics$flags <-
 # Number of observations flagged how many influnces it has
 table(diagnostics$flags)
 
-
 subset(diagnostics, flags == 3)
 ```
 
@@ -296,7 +285,6 @@ temp_model_data <- cbind(
   diagnostics)
 
 write_xlsx(temp_model_data, "model_data.xlsx")
-
 ```
 
 ```{r}
@@ -306,7 +294,7 @@ which(cd > qf(0.5, p+1, n-p-1))
 vif(model) # check multicolinearity
 ```
 
-```{r, fig.width=10, fig.height=5}
+```{r check-diagnostics, fig.width=10, fig.height=5}
 
 checks <- check_model(model, point_cex = 1.5)
 
