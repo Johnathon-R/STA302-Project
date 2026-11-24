@@ -17,6 +17,7 @@ the data is already stored then please skip this step.
 ```{r}
 library(tidyverse)
 library(dplyr)
+library(car)
 source('tools.R')
 ```
 
@@ -380,3 +381,49 @@ boxplot(residuals(model) ~ model_data$etf_indicator,
 )
 abline(h = 0, col = "red")
 ```
+
+
+```{r}
+n <- nobs(model)
+p <- model$rank
+cd <- cooks.distance(model)
+db <- dfbetas(model)
+dfits <- dffits(model)
+r <- rstudent(model)
+h <- hatvalues(model)
+```
+
+```{r}
+dfbetas(model)[cd, ]
+model.frame(model)[cd, ]
+```
+
+```{r}
+diagnostics <- data.frame(
+  cooks = cd,
+  dffits = dfits,
+  dfbetas = apply(abs(db), 1, max),
+  residuals = r,
+  leverage = h
+)
+
+diagnostics$flags <-
+  (cd > qf(0.5, p, n-p)) +
+  (abs(dfits) > 2*sqrt(p/n)) +
+  (apply(abs(db), 1, max) > 2/sqrt(n))
+
+# Number of observations flagged how many influnces it has
+table(diagnostics$flags)
+
+
+subset(diagnostics, flags == 3)
+```
+
+```{r}
+which(abs(dfits) > 2*sqrt((p)/n))
+which(abs(db) > 2 / sqrt(n))
+which(cd > qf(0.5, p+1, n-p-1)) 
+vif(model) # check multicolinearity
+```
+
+
