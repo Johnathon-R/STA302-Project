@@ -316,8 +316,8 @@ knitr::kable(round(vif, 2))
 
 The ordinary partial F-test favours the two P/E terms, although the change
 in RSS is small. The stock and bond VIFs remain near 7.4 in each model,
-so logging assets or removing P/E does not resolve their overlap. We will
-check the P/E result again with standard errors that allow uneven spread.
+so logging assets or removing P/E does not resolve their overlap. The
+F-test assumes constant error variance, so we treat its result cautiously.
 
 Stock and bond shares describe different allocation changes relative to
 other assets. For now we include both. Though, caution since they have 
@@ -385,6 +385,8 @@ c(observation = unname(log_influential),
 
 log_assets_ex <- update(log_assets_model,
   data = fitted_data[-log_influential, ], na.action = na.fail)
+fee_terms <- c("fund_annual_report_net_expense_ratio",
+  "fund_annual_report_net_expense_ratio:etf_indicator")
 fee_sensitivity <- rbind(
   full = coef(log_assets_model)[fee_terms],
   without_largest = coef(log_assets_ex)[fee_terms]
@@ -411,9 +413,9 @@ round(c(
 test_model <- lm(formula(log_assets_model), data = test)
 fee_split <- rbind(
   training = c(coef(train_models$log_assets)[fee_terms],
-    sqrt(diag(car::hccm(train_models$log_assets, type = "hc3")))[fee_terms]),
+    coef(summary(train_models$log_assets))[fee_terms, "Std. Error"]),
   testing = c(coef(test_model)[fee_terms],
-    sqrt(diag(car::hccm(test_model, type = "hc3")))[fee_terms])
+    coef(summary(test_model))[fee_terms, "Std. Error"])
 )
 colnames(fee_split) <- c("Fee", "Fee x ETF", "Fee SE", "Interaction SE")
 knitr::kable(round(fee_split, 3))
@@ -433,13 +435,51 @@ model_plots(train_models$log_assets)$residual_comparison("Training model")
 model_plots(test_model)$residual_comparison("Test model")
 ```
 
-The fee-by-fund-type point estimate changes sign across the split.
-Neither subset gives a precise interaction estimate. The most 
-influential observation is in the test subset and may contribute to the 
-difference. 
+The fee-by-fund-type point estimate changes sign across the split. The
+most influential observation is in the test subset and may contribute
+to the difference.
 
 Stock and bond VIFs are similar, while both residual plots still show 
 changing spread and tail departures. Prediction error alone does not show 
 that the fee relationship is stable. Since we explored the full dataset 
 before splitting it, this is an internal check rather than external 
 validation.
+
+# 6. Preferred model and conclusion
+
+We use the log-assets model with P/E terms as the preferred descriptive
+model among the four we compared. It has the lowest training AIC and the
+highest adjusted R-squared by a small amount. BIC favours leaving out
+P/E, so the selection is not decisive. We keep the return on its original
+scale to make the fee relationship easier to interpret.
+
+```{r final-results}
+final_model <- log_assets_model
+fee_results <- cbind(
+  coef(summary(final_model))[fee_terms,
+    c("Estimate", "Std. Error")],
+  confint(final_model)[fee_terms, ]
+)
+rownames(fee_results) <- c("Fee", "Fee x ETF")
+knitr::kable(round(fee_results, 3))
+c(n = nobs(final_model), adjusted_r2 = summary(final_model)$adj.r.squared)
+```
+
+Expense ratio is recorded as a proportion. For mutual funds, a one
+percentage point higher expense ratio is associated with about 0.62
+percentage points lower return, after adjusting for the other variables.
+The estimated ETF fee slope is about 0.32 percentage points lower return
+for the same fee increase. However, the difference between the two fee
+slopes is not statistically clear: its 95% interval runs from about -0.82
+to 1.42 percentage points per one-percentage-point fee increase. We
+therefore cannot conclude that the fee-return
+relationship differs between ETFs and mutual funds.
+
+The residual plots still show changing spread and departures in the
+tails. This weakens the usual confidence intervals and tests above. The
+ETF sample also loses more observations during complete-case filtering,
+and the influential observation changes the interaction estimate. The
+train/test check gives similar prediction error but does not establish
+a stable fee difference. These are associations, not causal effects. We
+regard this as the preferred model among those tried, with these
+limitations.
