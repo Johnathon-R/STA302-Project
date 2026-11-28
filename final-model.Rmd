@@ -211,7 +211,7 @@ underlying market conditions. Keep in mind year 2021 was post-covid recovery.
 
 ## Verifying assumptions
 
-### Trial transformations
+### Trial transformations based on plots
 
 Using the **same observations**, we refit the model using appropriate transformations.
 
@@ -235,9 +235,46 @@ log_return_model <- lm(
 )
 ```
 
-```{r}
+```{r, fig.width=12, fig.height=8}
+# Residual and QQ plot comparison
 model_plots(model)$residual_comparison(title = "Original model")
 model_plots(log_assets_model)$residual_comparison(title = "Log assets")
 model_plots(sqrt_return_model)$residual_comparison(title = "Square-root return and assets")
 model_plots(log_return_model)$residual_comparison(title = "Log return and assets")
+
+model_plots(model)$residuals_vs_predictors("total_net_assets")
+model_plots(log_assets_model)$residuals_vs_predictors("log(total_net_assets)")
+model_plots(sqrt_return_model)$residuals_vs_predictors("sqrt(total_net_assets)")
+model_plots(log_return_model)$residuals_vs_predictors("log(total_net_assets)")
+```
+
+Note about transformations- potentially inconclusive
+
+### Applying Box-Cox profile
+
+```{r, fig.width=12, fig.height=8}
+# Turn returns positive by adding 1
+gross_model <- update(model, I(1 + fund_return_ytd) ~ .)
+
+# Run the boxcox on the strictly positive model
+bc <- MASS::boxcox(gross_model, lambda = seq(-2, 4, by = 0.05))
+
+# Find power at highest point and draw it
+lambda <- bc$x[which.max(bc$y)]
+abline(v = lambda, col = "red", lty = 2)
+lambda
+
+# Get 95% plausible range of cutoff values
+cutoff <- max(bc$y) - qchisq(0.95, df = 1) / 2
+lambda_ci <- range(bc$x[bc$y >= cutoff])
+c(estimate = lambda, lower = lambda_ci[1], upper = lambda_ci[2])
+```
+
+Note about box-cox. Also potentially inconclusive aka no transformation required
+
+### Addressing P/E terms and asset collinearity
+
+```{r}
+
+
 ```
