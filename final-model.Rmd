@@ -85,7 +85,7 @@ retained_pct <- round(100 * sample_counts[2, ] / sample_counts[1, ], 1)
 # Seperately for etf and mutual fund.
 missing_counts <- sapply(
   split(funds[c(setdiff(columns, "inception_date"), "fund_age_years")],
-        eligible_type),
+        fund_type(funds$etf_indicator)),
   function(group) colSums(is.na(group))
 )
 
@@ -94,7 +94,7 @@ knitr::kable(rbind("Eligible observations retained (%)" = retained_pct))
 knitr::kable(missing_counts)
 ```
 
-## 2. Fit the model
+## 2. Fit the basic model
 
 ```{r regression}
 model <- lm(fund_return_ytd ~ total_net_assets +
@@ -104,7 +104,7 @@ model <- lm(fund_return_ytd ~ total_net_assets +
     fund_annual_report_net_expense_ratio * etf_indicator,
   data = model_data
 )
-fitted_data <- model.frame(model)
+fitted_data <- model.frame(model) # Extracting rows-variables used by lm()
 ```
 
 ## 3. Summary tables
@@ -132,17 +132,41 @@ knitr::kable(signif(covariance_matrix, 4))
 ```
 
 ## 4. Plots and model diagnostics
+```{r, fig.width=12, fig.height=8}
+checks <- check_model(model, plots = FALSE)
+check_plots <- model_plots(model, point_cex = 0.8,
+                           diagnostics = checks$diagnostics,
+                           cutoffs = checks$cutoffs)
+check_plots$presentation_plot()
+```
 
-```{r}
-plots <- model_plots(model, point_cex = 1.5)
+```{r, fig.width=12, fig.height=8}
+plots <- model_plots(model, point_cex = 0.8)
 
 #plots$qq()                                 # One plot
 #plots$show(c("qq", "residuals_vs_fitted"))  # Selected plots
 #plots$show() # All plots
-plots$presentation_plot()
 ```
 
+Un-comment and run the below code to create a csv file of the diagnostic
+data. Use for interperting model results and problematic points.
+
 ```{r}
-checks <- check_model(model, plots = FALSE)
-head(checks$flagged)
+#diagnostic_data <- cbind(
+#  original_row = checks$diagnostics$row_id,
+#  fitted_data,
+#  checks$diagnostics[c("cooks", "dffits", "dfbetas",
+#    "residuals", "leverage", "flags")]
+#)
+#write.csv(diagnostic_data, "model_data_diagnostics.csv", row.names = FALSE)
+```
+
+## 4. Exploratory checks
+
+### Removing most influential fund from model
+
+```{r cook-sensitivity}
+most_influential <- which.max(checks$diagnostics$cooks)
+model_ex <- lm(formula = formula(model), data = model_data[-most_influential, ])
+summary(model_ex)
 ```
