@@ -1,0 +1,144 @@
+---
+title: "STA302: Final Project"
+author: "Alexandros, Nikolas, Johnathon"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Prior to running any code
+
+Please download the data from
+<https://www.kaggle.com/datasets/stefanoleone992/mutual-funds-and-etfs>,
+and store the file within a data/ folder in the working directory. If
+the data is already stored then please skip this step.
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(car)
+library(writexl)
+source('tools.R')
+```
+
+## 1. Load and clean the data
+
+```{r clean-data}
+columns <- c(
+  "fund_return_ytd",
+  "fund_annual_report_net_expense_ratio",
+  "total_net_assets",
+  "inception_date",
+  "asset_stocks",
+  "asset_bonds",
+  "annual_holdings_turnover",
+  "fund_price_earning_ratio",
+  "fund_sector_technology"
+)
+
+funds <- rbind(
+  transform(read.csv("data/ETFs.csv", na.strings = c("", "NA"))[columns],
+            etf_indicator = 1),
+  transform(read.csv("data/MutualFunds.csv", na.strings = c("", "NA"))[columns],
+            etf_indicator = 0)
+)
+
+funds <- funds |>
+  mutate(
+    fund_age_years = as.numeric(as.Date("2021-01-01") - as.Date(inception_date)) / 365.25
+  ) |>
+  filter(fund_age_years > 0) |>
+  mutate(
+    pe_reported = as.integer(!is.na(fund_price_earning_ratio)),
+    pe_centered_when_reported = {
+      pe <- fund_price_earning_ratio
+      median_pe <- median(pe, na.rm = TRUE)
+      ifelse(is.na(pe), median_pe, pe) - median_pe
+    }
+  ) |>
+  select(-inception_date)
+
+# Use the two P/E terms in the model and keep the raw P/E in funds for the audit.
+model_data <- select(funds, -fund_price_earning_ratio)
+model_data <- model_data[complete.cases(model_data), ]
+```
+
+### Sample and missingness audit
+
+```{r part2-eda-sample, echo=FALSE, results='asis'}
+local({
+  fund_type <- function(indicator) {
+    factor(indicator, levels = c(0, 1), labels = c("Mutual fund", "ETF"))
+  }
+  eligible_type <- fund_type(funds$etf_indicator)
+  model_type <- fund_type(model_data$etf_indicator)
+  sample_counts <- rbind(
+    "Eligible before complete-case filtering" = table(eligible_type),
+    "Main model sample" = table(model_type),
+    "P/E reported in model sample" = table(model_type[model_data$pe_reported == 1L])
+  )
+  print(knitr::kable(cbind(sample_counts, Total = rowSums(sample_counts))))
+
+  retained <- round(100 * sample_counts[2, ] / sample_counts[1, ], 1)
+  print(knitr::kable(rbind("Eligible observations retained (%)" = retained)))
+
+  # Reuse the input columns, with fund age in place of the raw date.
+  missing_counts <- sapply(
+    split(funds[c(setdiff(columns, "inception_date"), "fund_age_years")], eligible_type),
+    function(group) colSums(is.na(group))
+  )
+  print(knitr::kable(missing_counts))
+})
+```
+
+## 2. Fit the model
+
+```{r regression}
+model <- lm(fund_return_ytd ~ total_net_assets +
+    fund_age_years + asset_stocks + asset_bonds +
+    annual_holdings_turnover +
+    fund_sector_technology + pe_reported + pe_centered_when_reported + 
+    fund_annual_report_net_expense_ratio * etf_indicator,
+  data = model_data
+)
+```
+
+## 3. Summary tables
+
+```{r}
+# Describe fitted model
+summary(model)
+
+# Describe cleaned dataset including potentially unused observations
+summary(model_data)
+
+# 95% confidence interval
+confint(model)
+
+# Test each predictor while accounting for all the others
+drop1(model, test = "F")
+
+# ANOVA test
+intercept_only <- lm(fund_return_ytd ~ 1, data = model_data)
+anova(intercept_only, model)
+
+# The first column is the response; exclude it from predictor covariance
+covariance_matrix <- cov(model_data[, -1])
+knitr::kable(signif(covariance_matrix, 4))
+```
+
+## 4. Plots and model diagnostics
+
+```{r}
+plots <- model_plots(model, point_cex = 1.5)
+
+plots$qq()                                 # One plot
+plots$show(c("qq", "residuals_vs_fitted"))  # Selected plots
+plots$show()
+```
+
+```{r}
+checks <- check_model(model, plots = FALSE)
+head(checks$flagged)
+```
