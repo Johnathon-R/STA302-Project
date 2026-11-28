@@ -1,0 +1,303 @@
+---
+title: "STA302: Final Project"
+author: "Alexandros, Nikolas, Johnathon"
+output: html_document
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+# Before running the analysis
+
+Download `ETFs.csv` and `MutualFunds.csv` from
+<https://www.kaggle.com/datasets/stefanoleone992/mutual-funds-and-etfs>
+and put both files in `data/`.
+
+```{r setup, message=FALSE}
+# dplyr and tidyr are included in tidyverse. tools.R contains the project's
+# allocation and diagnostic functions.
+library(tidyverse)
+source("tools.R")
+```
+
+## 1. Prepare the model data
+
+```{r clean-data}
+# Keep the response, adjustment variables, and raw P/E for the missingness audit.
+columns <- c(
+  "fund_return_ytd", "fund_annual_report_net_expense_ratio",
+  "total_net_assets", "inception_date", "asset_stocks", "asset_bonds",
+  "annual_holdings_turnover", "fund_price_earning_ratio",
+  "fund_sector_technology"
+)
+
+read_funds <- function(path, is_etf) {
+  data <- read.csv(path, na.strings = c("", "NA"))
+
+  # tools.R fills an unknown allocation with zero when the known allocations
+  # already total 100%, or with the remaining share when exactly one is missing.
+  # Apply this before selecting columns: the rule needs every asset_* column.
+  asset_columns <- grep("^asset_", names(data), value = TRUE)
+  data <- impute_allocation(data, asset_columns)
+
+  data <- data[columns]
+  data$etf_indicator <- as.integer(is_etf) # 1 = ETF; 0 = mutual fund
+  data
+}
+
+funds <- bind_rows(
+  read_funds("data/ETFs.csv", TRUE),
+  read_funds("data/MutualFunds.csv", FALSE)
+)
+
+# Use January 1, 2021 as the age reference. The date filter excludes funds
+# that had not yet started by then; missing dates are excluded as well.
+funds <- funds |>
+  mutate(inception_date = as.Date(inception_date)) |>
+  filter(inception_date < as.Date("2021-01-01")) |>
+  mutate(fund_age_years = as.numeric(
+    as.Date("2021-01-01") - inception_date
+  ) / 365.25) |>
+  select(-inception_date)
+
+# A missing P/E is not zero. Use two terms so such funds can stay in the
+# model: pe_reported identifies whether P/E was supplied; the centered term
+# is zero for missing P/E and equals P/E minus the sample median otherwise.
+median_pe <- median(funds$fund_price_earning_ratio, na.rm = TRUE)
+funds <- funds |>
+  mutate(
+    pe_reported = as.integer(!is.na(fund_price_earning_ratio)),
+    pe_centered_when_reported = coalesce(fund_price_earning_ratio, median_pe) - median_pe
+  )
+
+# Retain raw P/E in funds for the audit. It is not a model column because
+# requiring it to be complete would discard the observations above.
+model_data <- funds |>
+  select(-fund_price_earning_ratio) |>
+  drop_na()
+```
+
+### Sample and missingness audit
+
+```{r sample-audit}
+fund_type <- function(x) factor(x, levels = c(0, 1),
+  labels = c("Mutual fund", "ETF"))
+
+# table() counts each fund type; the third row counts fitted records with P/E.
+sample_counts <- rbind(
+  "Eligible after inception filter" = table(fund_type(funds$etf_indicator)),
+  "Main model sample" = table(fund_type(model_data$etf_indicator)),
+  "P/E reported in model sample" = table(fund_type(
+    model_data$etf_indicator[model_data$pe_reported == 1]
+  ))
+)
+knitr::kable(cbind(sample_counts, Total = rowSums(sample_counts)))
+
+retained_pct <- 100 * sample_counts["Main model sample", ] /
+  sample_counts["Eligible after inception filter", ]
+knitr::kable(rbind("Eligible records retained (%)" = round(retained_pct, 1)))
+
+# Count missing values before complete-case filtering. This shows which
+# fields cause sample loss, separately for ETFs and mutual funds.
+audit_columns <- c(setdiff(columns, "inception_date"), "fund_age_years")
+missing_by_type <- sapply(
+  split(funds[audit_columns], fund_type(funds$etf_indicator)),
+  function(group) colSums(is.na(group))
+)
+knitr::kable(missing_by_type)
+```
+
+Allocation filling uses the unit-sum rule in `tools.R`. The missingness
+table describes records after that step. Unequal retention by fund type
+limits how broadly the fitted sample can represent either population.
+
+## 2. Fit the main model
+
+```{r regression}
+model <- lm(
+  fund_return_ytd ~ total_net_assets + fund_age_years +
+    asset_stocks + asset_bonds + annual_holdings_turnover +
+    fund_sector_technology + pe_reported + pe_centered_when_reported +
+    fund_annual_report_net_expense_ratio * etf_indicator,
+  data = model_data
+)
+fitted_data <- model.frame(model) # Exact rows and variables used by lm().
+summary(model)
+confint(model)
+```
+
+The `*` includes the expense ratio, the ETF indicator, and their interaction.
+The ETF coefficient is the adjusted ETF–mutual fund difference at an expense
+ratio of zero. The interaction is the difference between their expense-ratio
+slopes. These coefficients are associations, not causal effects.
+
+```{r partial-tests}
+# Each F test removes one term from the full model while keeping the others.
+drop1(model, test = "F")
+```
+
+## 3. Diagnostics
+
+```{r diagnostics, fig.width=10, fig.height=8}
+# tools.R computes Cook's distance, DFFITS, DFBETAS, leverage, and course
+# screening cutoffs. It also prints flagged observations and model VIFs when
+# the car package is installed. The model fit itself does not need car.
+checks <- check_model(model, plots = FALSE)
+plots <- model_plots(model, point_cex = 0.8,
+  diagnostics = checks$diagnostics, cutoffs = checks$cutoffs)
+plots$presentation_plot()
+```
+
+```{r export-diagnostics}
+# Keep the model variables and diagnostics together, in fitted-row order.
+# CSV is readable by Excel and does not require an extra export package.
+diagnostic_data <- cbind(
+  original_row = checks$diagnostics$row_id,
+  fitted_data,
+  checks$diagnostics[c("cooks", "dffits", "dfbetas",
+    "residuals", "leverage", "flags")]
+)
+write.csv(diagnostic_data, "model_data_diagnostics.csv", row.names = FALSE)
+```
+
+## 4. Exploratory checks
+
+### Return by fund type
+
+```{r return-by-type}
+# Returns are stored as proportions; multiply by 100 for percentages.
+returns_by_type <- split(100 * fitted_data$fund_return_ytd,
+  fund_type(fitted_data$etf_indicator))
+return_summary <- t(vapply(returns_by_type, function(y) {
+  c(n = length(y), median_return_pct = median(y), sd_return_pct = sd(y))
+}, numeric(3)))
+knitr::kable(return_summary, digits = 2)
+```
+
+### Trial transformations
+
+The models below use the **same observations**. Logging assets changes a
+predictor's scale. The square-root and log trials change the response scale,
+so their coefficient values and fitted responses are not directly comparable
+to the original model's.
+
+```{r transformations, fig.width=10, fig.height=5}
+# The transformations need positive inputs. Stop with a clear error if the
+# data do not meet that requirement.
+stopifnot(all(fitted_data$total_net_assets > 0),
+  all(1 + fitted_data$fund_return_ytd > 0))
+
+log_assets_model <- update(model,
+  . ~ . - total_net_assets + log(total_net_assets),
+  data = fitted_data, na.action = na.fail)
+sqrt_return_model <- update(log_assets_model,
+  sqrt(1 + fund_return_ytd) ~ .)
+log_return_model <- update(log_assets_model,
+  log(1 + fund_return_ytd) ~ .)
+
+# Standardized residuals divide each residual by its estimated standard
+# deviation. The smooth curve highlights patterns; Q-Q points assess tails.
+plot_residuals <- function(fit, title) {
+  r <- rstandard(fit)
+  x <- fitted(fit)
+  old_par <- par(mfrow = c(1, 2))
+  on.exit(par(old_par))
+  plot(x, r, pch = ".", main = title,
+    xlab = "Fitted response", ylab = "Standardized residual")
+  abline(h = 0, col = "grey50")
+  lines(lowess(x, r), col = "firebrick")
+  qqnorm(r, pch = ".")
+  qqline(r, col = "firebrick")
+}
+
+trial_models <- list(original = model, log_assets = log_assets_model,
+  sqrt_return = sqrt_return_model, log_return = log_return_model)
+for (name in names(trial_models)) plot_residuals(trial_models[[name]], name)
+
+# Compare standardized-residual spread at low and high fitted values.
+# cut() forms ten equal-count groups, so the first and last describe the ends.
+residual_spread <- function(fit) {
+  r <- rstandard(fit)
+  groups <- cut(fitted(fit),
+    breaks = quantile(fitted(fit), 0:10 / 10), include.lowest = TRUE)
+  spread <- tapply(r, groups, sd)
+  c(low_sd = spread[1], high_sd = spread[10],
+    lower_tail = unname(quantile(r, 0.01)))
+}
+knitr::kable(t(vapply(trial_models, residual_spread, numeric(3))), digits = 2)
+```
+
+### Box–Cox profile
+
+```{r boxcox, fig.width=7, fig.height=5}
+# Box–Cox requires a positive response. Adding 1 is valid for these fitted
+# returns; profiling lambda then tests possible power transformations.
+positive_model <- update(model, I(1 + fund_return_ytd) ~ .,
+  data = fitted_data, na.action = na.fail, y = TRUE)
+profile <- MASS::boxcox(positive_model,
+  lambda = seq(-2, 3, by = 0.01), plotit = FALSE, interp = FALSE)
+peak <- which.max(profile$y)
+lambda_hat <- profile$x[peak]
+
+# For one profiled parameter, the likelihood-ratio 95% region lies no more
+# than qchisq(.95, 1)/2 below the maximum log-likelihood.
+cutoff <- profile$y[peak] - qchisq(0.95, df = 1) / 2
+lambda_ci <- range(profile$x[profile$y >= cutoff])
+plot(profile$x, profile$y, type = "l", xlab = expression(lambda),
+  ylab = "Profile log-likelihood", main = "Box–Cox: original predictors")
+abline(h = cutoff, col = "red", lty = 2)
+abline(v = lambda_hat, col = "blue", lty = 2)
+c(estimate = lambda_hat, lower = lambda_ci[1], upper = lambda_ci[2])
+```
+
+### P/E terms and allocation collinearity
+
+```{r pe-and-vif}
+# Compare nested models on exactly the same rows. This partial F test asks
+# whether the P/E reporting indicator and centered P/E help jointly.
+without_pe <- update(model,
+  . ~ . - pe_reported - pe_centered_when_reported,
+  data = fitted_data, na.action = na.fail)
+anova(without_pe, model)
+
+# VIF = 1/(1 - R^2) from regressing one predictor on all other design
+# columns. Report the two allocation variables of interest. This avoids a
+# package dependency and uses the actual columns in each fitted model.
+allocation_vif <- function(fit) {
+  x <- model.matrix(fit)[, -1, drop = FALSE] # Remove the intercept column.
+  vapply(c("asset_stocks", "asset_bonds"), function(variable) {
+    other <- x[, colnames(x) != variable, drop = FALSE]
+    r2 <- summary(lm(x[, variable] ~ other))$r.squared
+    1 / (1 - r2)
+  }, numeric(1))
+}
+knitr::kable(rbind(
+  original = allocation_vif(model),
+  log_assets = allocation_vif(log_assets_model),
+  without_pe = allocation_vif(without_pe)
+), digits = 2)
+```
+
+Unequal residual variance weakens the usual partial F-test interpretation.
+The VIF measures collinearity among model columns, not whether allocations
+are measured accurately.
+
+### Sensitivity to the largest Cook's distance
+
+```{r influence-sensitivity}
+# Cook's distance combines leverage and residual size. Removing its largest
+# observation is a sensitivity check, not a reason to delete that fund.
+largest_row <- which.max(checks$diagnostics$cooks)
+c(max_cook = checks$diagnostics$cooks[largest_row],
+  cook_cutoff = checks$cutoffs[["cooks"]],
+  high_leverage = sum(checks$diagnostics$high_leverage),
+  abs_standardized_residual_over_4 = sum(abs(rstandard(model)) > 4))
+
+fitted_data[largest_row, c("etf_indicator", "fund_return_ytd",
+  "fund_annual_report_net_expense_ratio"), drop = FALSE]
+without_largest <- lm(formula(model),
+  data = fitted_data[-largest_row, ], na.action = na.fail)
+interaction <- "fund_annual_report_net_expense_ratio:etf_indicator"
+c(full = unname(coef(model)[interaction]),
+  without_largest = unname(coef(without_largest)[interaction]))
+```

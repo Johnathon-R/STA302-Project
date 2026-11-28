@@ -254,60 +254,25 @@ variances. Covariances depend on units, so their sizes alone do not
 measure collinearity. Four significant digits are used only to display
 the table.
 
-## 4. Graphs
-
-```{r}
-n <- nobs(model)
-p <- model$rank
-cd <- cooks.distance(model)
-db <- dfbetas(model)
-dfits <- dffits(model)
-r <- rstudent(model)
-h <- hatvalues(model)
-```
-
-```{r}
-diagnostics <- data.frame(
-  cooks = cd,
-  dffits = dfits,
-  dfbetas = apply(abs(db), 1, max),
-  residuals = r,
-  leverage = h
-)
-
-diagnostics$flags <-
-  (cd > qf(0.5, p, n-p)) +
-  (abs(dfits) > 2*sqrt(p/n)) +
-  (apply(abs(db), 1, max) > 2/sqrt(n))
-
-# Number of observations flagged how many influnces it has
-table(diagnostics$flags)
-
-subset(diagnostics, flags == 3)
-```
-
-```{r}
-temp_model_data <- cbind(
-  position = seq_len(nobs(model)),
-  original_row = rownames(model.frame(model)),
-  model.frame(model),
-  diagnostics)
-
-write_xlsx(temp_model_data, "model_data.xlsx")
-```
-
-```{r}
-which(abs(dfits) > 2*sqrt((p)/n))
-which(abs(db) > 2 / sqrt(n))
-which(cd > qf(0.5, p, n - p))
-vif(model) # check multicolinearity
-```
+## 4. Model diagnostics
 
 ```{r check-diagnostics, fig.width=10, fig.height=5}
+checks <- check_model(model, plots = FALSE)
+plots <- model_plots(model, point_cex = 1.5,
+                     diagnostics = checks$diagnostics, cutoffs = checks$cutoffs)
+plots$show()
+```
 
-checks <- check_model(model, point_cex = 1.5)
-
-checks$diagnostics
+```{r export-diagnostics}
+write_xlsx(
+  cbind(
+    position = checks$diagnostics$observation,
+    original_row = checks$diagnostics$row_id,
+    model.frame(model),
+    checks$diagnostics[, c("cooks", "dffits", "dfbetas", "residuals", "leverage", "flags")]
+  ),
+  "model_data.xlsx"
+)
 ```
 
 ## Part 2 exploratory model checks
@@ -426,11 +391,10 @@ how much the expense-ratio interaction changes. Use the result to describe
 sensitivity while reviewing the source of the observation.
 
 ```{r part2-eda-influence, echo=FALSE}
-p2_cook <- cooks.distance(model)
+p2_cook <- checks$diagnostics$cooks
 p2_largest <- which.max(p2_cook)
-p2_cook_cutoff <- qf(0.5, model$rank, df.residual(model))
-c(max_cook = max(p2_cook), cook_cutoff = p2_cook_cutoff,
-  high_leverage = sum(hatvalues(model) > 2 * model$rank / nobs(model)),
+c(max_cook = max(p2_cook), cook_cutoff = checks$cutoffs[["cooks"]],
+  high_leverage = sum(checks$diagnostics$high_leverage),
   outlying_residual = sum(abs(rstandard(model)) > 4))
 
 p2_fitted_data[p2_largest, c("etf_indicator", "fund_return_ytd",
