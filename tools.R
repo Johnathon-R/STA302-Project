@@ -33,7 +33,7 @@ impute_allocation <- function(data, proportion_cols) {
     }
   }
 
-  return(data)
+  data
 }
 
 # Calculate the course cutoffs
@@ -90,14 +90,17 @@ check_model <- function(model, plots = TRUE,
 
   # Keep both the observation and coefficient for each DFBETAS flag
   db_indices <- which(abs(db) > cutoffs[["dfbetas"]], arr.ind = TRUE)
-  flagged <- subset(diagnostics, flags > 0 | high_leverage)
+  flagged <- diagnostics[
+    which(diagnostics$flags > 0 | diagnostics$high_leverage), , drop = FALSE
+  ]
 
   checks <- list(
     summary = summary(model),
     confint = confint(model),
     partial_tests = drop1(model, test = "F"),
     vif = if (length(attr(terms(model), "term.labels")) > 1L &&
-              !anyNA(coef(model)) && requireNamespace("car", quietly = TRUE)) {
+                !anyNA(coef(model)) &&
+                requireNamespace("car", quietly = TRUE)) {
       car::vif(model)
     },
     cutoffs = cutoffs,
@@ -307,7 +310,8 @@ model_plots <- function(model, point_cex = 0.8,
 
     draw({
       graphics::pairs(cbind(predictors, Residuals = errors),
-                      labels = c(plot_labels(colnames(predictors)), "Residuals"),
+                      labels = c(plot_labels(colnames(predictors)),
+                                 "Residuals"),
                       pch = 1, cex = 0.3 * point_cex,
                       col = adjustcolor("black", alpha.f = 0.3),
                       main = "Predictors and residuals",
