@@ -248,7 +248,13 @@ model_plots(sqrt_return_model)$residuals_vs_predictors("sqrt(total_net_assets)")
 model_plots(log_return_model)$residuals_vs_predictors("log(total_net_assets)")
 ```
 
-Note about transformations- potentially inconclusive
+Recognise that the log transformation reduces the spread between predictor and
+residual. None of the transformations seem to fix potentially non-constant
+variance and skewed tails.
+
+We can proceed with `log total assets` which is reasonable since certain firms
+are likely to hold larger total assets compared to the majority. Thus by 
+logging `total net assets`, we are able to achieve more standardized holdings.
 
 ### Applying Box-Cox profile
 
@@ -272,8 +278,20 @@ c(estimate = lambda, lower = lambda_ci[1], upper = lambda_ci[2])
 
 Box-Cox suggests a power near 0.65 for `1 + fund_return_ytd`, with a 95%
 range of about 0.55 to 0.70. This points away from using the original
-response scale, but we still need to refit a simple transformation and
+response scale. We still need to refit a simple transformation and
 check its residual plots before choosing a final model.
+
+```{r boxcox-check, fig.width=12, fig.height=5}
+# Change only the response so we can see whether Box-Cox helps.
+boxcox_model <- update(model,
+  I(((1 + fund_return_ytd)^lambda - 1) / lambda) ~ .,
+  data = fitted_data, na.action = na.fail)
+model_plots(boxcox_model)$residual_comparison(title = "Box-Cox return")
+```
+
+This model uses the same observations and predictors as the basic model.
+The spread still grows across fitted values, and the Q-Q plot still bends
+in the tails. The transformation does not resolve those issues by itself.
 
 ### P/E terms and allocation collinearity
 
