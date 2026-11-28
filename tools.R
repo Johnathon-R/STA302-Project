@@ -150,6 +150,7 @@ check_model <- function(model, plots = TRUE,
 
 # Build lecture-style plots for a fitted model.
 # Call plots$qq() for one plot or plots$show() for all plots.
+# plots$presentation_plot() makes a separate four-panel figure.
 model_plots <- function(model, point_cex = 0.8,
                         diagnostics = influence_table(model, cutoffs),
                         cutoffs = model_cutoffs(model)) {
@@ -271,6 +272,39 @@ model_plots <- function(model, point_cex = 0.8,
     })
   }
 
+  # A single figure for slides or a report; this does not change plots$show().
+  presentation_plot <- function(top = 10, title = "Model diagnostics") {
+    old <- par(mfrow = c(2, 2), mar = c(4, 4, 3, 1),
+               oma = c(0, 0, 2, 0))
+    on.exit(par(old))
+
+    rank_plot <- function(y, cutoff, label) {
+      i <- head(order(y, decreasing = TRUE), top)
+      barplot(y[i], names.arg = i,
+              col = ifelse(y[i] > cutoff, "#C94F42", "#37678A"),
+              border = NA, ylim = c(0, 1.1 * max(y[i], cutoff)),
+              xlab = "Observation in fitted model", ylab = label,
+              main = label)
+      abline(h = cutoff, col = "#C94F42", lty = 2, lwd = 2)
+      mtext(paste("Course cutoff:", signif(cutoff, 3)),
+            side = 3, line = 0.2, adj = 1, cex = 0.75)
+    }
+
+    plot(fitted(model), e, xlab = "Fitted values", ylab = "Residuals",
+         main = "Residuals vs fitted", pch = 16, cex = point_cex,
+         col = adjustcolor("#37678A", alpha.f = 0.35))
+    abline(h = 0, col = "#C94F42", lwd = 2)
+
+    qqnorm(e, main = "Normal Q-Q plot", pch = 16, cex = point_cex,
+           col = adjustcolor("#37678A", alpha.f = 0.35))
+    qqline(e, col = "#C94F42", lwd = 2)
+
+    rank_plot(diagnostics$leverage, cutoffs[["leverage"]], "Leverage")
+    rank_plot(diagnostics$cooks, cutoffs[["cooks"]], "Cook's distance")
+    mtext(title, outer = TRUE, cex = 1.2, font = 2)
+    invisible(NULL)
+  }
+
   methods <- list(
     histogram = histogram,
     response_boxplot = response_boxplot,
@@ -294,5 +328,5 @@ model_plots <- function(model, point_cex = 0.8,
     invisible(NULL)
   }
 
-  c(methods, list(show = show))
+  c(methods, list(show = show, presentation_plot = presentation_plot))
 }
