@@ -39,6 +39,7 @@ impute_allocation <- function(data, proportion_cols) {
 }
 
 # Recheck a fitted model without changing it or removing observations.
+# Usage: checks <- check_model(model)
 # After refitting: checks_revised <- check_model(model_revised)
 # Each diagnostic uses its own figure instead of a multi-panel layout.
 # In R Markdown, use fig.width=10, fig.height=6 for wide, full-size figures.
@@ -54,7 +55,7 @@ check_model <- function(model, plots = TRUE, pairs_plot = TRUE,
       !is.finite(point_cex) || point_cex <= 0) {
     stop("point_cex must be one positive, finite number.")
   }
-
+  
   # Suppress NA padding in this local copy so every output uses fitted rows.
   # This also keeps rows aligned for models fitted with na.exclude.
   model$na.action <- NULL
@@ -63,7 +64,7 @@ check_model <- function(model, plots = TRUE, pairs_plot = TRUE,
   errors <- residuals(model)
   predictors <- model.matrix(model)
   predictors <- predictors[, colnames(predictors) != "(Intercept)", drop = FALSE]
-
+  
   n <- nobs(model)
   p <- model$rank # Includes the intercept, as in the existing diagnostics table.
   if (is.null(cooks_cutoff)) cooks_cutoff <- qf(0.5, p, n - p)
@@ -73,7 +74,7 @@ check_model <- function(model, plots = TRUE, pairs_plot = TRUE,
     dfbetas = 2 / sqrt(n),
     leverage = 2 * p / n # Screening rule; leverage alone does not imply influence.
   )
-
+  
   db <- dfbetas(model)
   diagnostics <- data.frame(
     observation = seq_len(n),
@@ -92,7 +93,7 @@ check_model <- function(model, plots = TRUE, pairs_plot = TRUE,
     "cooks_flag", "dffits_flag", "dfbetas_flag"
   )])
   diagnostics$high_leverage <- diagnostics$leverage > cutoffs["leverage"]
-
+  
   # Keep the coefficient names: which(abs(db) > cutoff) alone gives matrix
   # element indices, which are not observation numbers.
   db_indices <- which(abs(db) > cutoffs["dfbetas"], arr.ind = TRUE)
@@ -107,7 +108,7 @@ check_model <- function(model, plots = TRUE, pairs_plot = TRUE,
     which(diagnostics$flags > 0 | diagnostics$high_leverage), , drop = FALSE
   ]
   flagged <- flagged[order(-flagged$flags, -flagged$cooks), , drop = FALSE]
-
+  
   model_summary <- summary(model)
   intervals <- confint(model)
   partial_tests <- drop1(model, test = "F")
@@ -121,7 +122,7 @@ check_model <- function(model, plots = TRUE, pairs_plot = TRUE,
   } else {
     warning("VIF skipped: package 'car' is not installed.")
   }
-
+  
   cat("\nModel summary\n")
   print(model_summary)
   cat("\n95% confidence intervals\n")
@@ -141,7 +142,7 @@ check_model <- function(model, plots = TRUE, pairs_plot = TRUE,
     cat("Showing", max_rows, "of", nrow(flagged),
         "rows; all are available in the returned $flagged table.\n")
   }
-
+  
   if (plots) {
     old_par <- par(no.readonly = TRUE)
     on.exit(par(old_par), add = TRUE)
@@ -161,7 +162,7 @@ check_model <- function(model, plots = TRUE, pairs_plot = TRUE,
     if (!is.null(group)) {
       group <- factor(group, levels = c(0, 1), labels = c("Mutual fund", "ETF"))
     }
-
+    
     # Give every plot the entire device, including in short R Markdown outputs.
     # Enlarging the plotting area avoids squeezing four plots into one figure.
     par(mfrow = c(1, 1), mar = c(4.5, 4.5, 3, 1),
@@ -180,7 +181,7 @@ check_model <- function(model, plots = TRUE, pairs_plot = TRUE,
     qqnorm(errors, main = "Normal Q-Q plot of residuals", pch = 1,
            cex = point_cex, col = point_col)
     qqline(errors, col = "red", lwd = 2)
-
+    
     # Show the influence measures alongside their screening cutoffs.
     if (!is.null(group)) {
       boxplot(errors ~ group, xlab = "Fund type", ylab = "Residual",
@@ -208,7 +209,7 @@ check_model <- function(model, plots = TRUE, pairs_plot = TRUE,
          main = "Residuals versus leverage")
     abline(h = 0, col = "red")
     abline(v = cutoffs["leverage"], col = "red", lty = 2)
-
+    
     # Each predictor, including the interaction, also gets a separate figure.
     for (predictor in colnames(predictors)) {
       label <- if (predictor %in% names(short_labels)) short_labels[[predictor]] else predictor
@@ -217,7 +218,7 @@ check_model <- function(model, plots = TRUE, pairs_plot = TRUE,
            main = "Residuals versus predictor")
       abline(h = 0, col = "red")
     }
-
+    
     if (pairs_plot && ncol(predictors) > 0) {
       par(mfrow = c(1, 1), cex = 1)
       plot_data <- as.data.frame(predictors)
@@ -239,7 +240,7 @@ check_model <- function(model, plots = TRUE, pairs_plot = TRUE,
             })
     }
   }
-
+  
   invisible(list(
     summary = model_summary, confint = intervals, partial_tests = partial_tests,
     vif = vif_result, cutoffs = cutoffs, diagnostics = diagnostics,

@@ -18,6 +18,7 @@ the data is already stored then please skip this step.
 library(tidyverse)
 library(dplyr)
 library(car)
+library(writexl)
 source('tools.R')
 ```
 
@@ -136,31 +137,35 @@ table(model_data$etf_indicator)
 
 ```
 
-**Important:** This assumes your asset allocation columns sum to 1. The
-imputation only fills rows with exactly one missing asset value;
-remaining ETF NAs become zero, while remaining mutual fund NAs are
-retained for `complete.cases()` to handle.
+### Sample and missingness audit
 
-Missing stock or bond weights are **unknown, not zero**. A row missing
-any required value is excluded from `model_data`, but remains in
-`funds`. Recorded zeros and other non-missing values are kept. No
-outliers are removed and no values are filled in. The indicator and age
-are the only derived predictors; all others predictors: assets, P/E,
-weights, expenses, turnover, and returns are unchanged.
+```{r part2-eda-sample, echo=FALSE}
+p2_group <- function(data) {
+  factor(data$etf_indicator, levels = c(0, 1),
+    labels = c("Mutual fund", "ETF"))
+}
+p2_counts <- rbind(
+  "Eligible before complete-case filtering" = table(p2_group(funds)),
+  "Main model sample" = table(p2_group(model_data)),
+  "P/E reported in model sample" = table(p2_group(
+    model_data[model_data$pe_reported == 1L, ]))
+)
+knitr::kable(cbind(p2_counts, Total = rowSums(p2_counts)))
+round(100 * p2_counts[2, ] / p2_counts[1, ], 1)
 
-```{r}
-#---------------------------------------------
-# 1.7. General observations
-#---------------------------------------------
-# percent dropped
-percent_dropped <- (abs(nrow(funds) - nrow(model_data)) / nrow(funds)) * 100
-percent_dropped
+p2_fields <- c("fund_return_ytd", "total_net_assets", "fund_age_years",
+  "asset_stocks", "asset_bonds", "annual_holdings_turnover",
+  "fund_price_earning_ratio", "fund_sector_technology",
+  "fund_annual_report_net_expense_ratio")
+p2_missing <- lapply(split(funds[, p2_fields], p2_group(funds)),
+  function(group) colSums(is.na(group)))
+knitr::kable(do.call(cbind, p2_missing))
 ```
 
-By performing listwise deletion on all the NaN values, we drop 38.99% of our data,
-a substantial portion. Hence creating bias towards certain fund, so we should try 
-and mitigate it. To do so we will target the highly impacted columns, useing some
-cleaning strategies.
+Allocation filling uses the unit-sum rule in `tools.R`. The missingness
+table describes records after that step. The model uses a P/E reporting
+indicator and centered P/E where reported. Unequal retention by fund type
+is a reason to examine the analysis sample before generalizing.
 
 ## 2. Fit the model
 
@@ -174,9 +179,9 @@ model <- lm(fund_return_ytd ~ total_net_assets +
 )
 ```
 
-The ETF coefficient compares etfs with mutual funds while holding the
-other predictors fixed. No transformations or corrections are applied to
-this model.
+The ETF coefficient is the adjusted ETF–mutual fund difference at an expense
+ratio of zero. The interaction coefficient is the difference between the two
+expense-ratio slopes. This baseline uses the original return and asset scales.
 
 ## 3. Summary tables and tests
 
@@ -251,138 +256,6 @@ the table.
 
 ## 4. Graphs
 
-These plots use the original returns and ordinary residuals. A residual
-is observed return minus fitted return; calculating it does not
-transform the model.
-
-**Boxplot:** compare returns between etfs and mutual funds.
-
-```{r return-boxplot}
-boxplot(fund_return_ytd ~ etf_indicator,
-  data = model_data,
-  names = c("Mutual fund", "ETF"),
-  ylab = "2021 (Jan-Nov) returns (decimal)", 
-  main = "2021 (Jan-Nov) returns by fund type"
-)
-```
-
-**Histogram:** examine the distribution of returns.
-
-```{r return-histogram}
-hist(model_data$fund_return_ytd,
-  xlab = "2021 (Jan-Nov) returns (decimal)", 
-  main = "Distribution of 2021 (Jan-Nov) returns"
-)
-```
-
-**Residual plot:**
-
-```{r residual-plot}
-plot(fitted(model), residuals(model),
-  xlab = "Fitted return", ylab = "Residual", main = "Residuals versus fitted"
-)
-abline(h = 0, col = "red")
-```
-
-**Residual vs response per perdictor** Large individual graphs
-
-```{r predictor-residuals, fig.width=10, fig.height=18}
-predictor_data <- as.data.frame(
-  model.matrix(model)[, -1, drop = FALSE]
-)
-
-# Five rows and two columns provide space for nine plots.
-par(mfrow = c(5, 2), mar = c(4, 4, 3, 1))
-
-for (predictor in names(predictor_data)) {
-  plot(
-    predictor_data[[predictor]],
-    residuals(model),
-    xlab = predictor,
-    ylab = "Residual",
-    pch = 20,
-    cex.lab = 0.8
-  )
-  abline(h = 0, col = "red")
-}
-
-par(mfrow = c(1, 1))
-```
-
-**Residuals for predictor:** Matrix format
-
-```{r residual-pairs, fig.width=16, fig.height=16}
-# Get all model terms, including the interaction, without the intercept
-plot_data <- as.data.frame(
-  model.matrix(model)[, -1, drop = FALSE]
-)
-
-# Add residuals as the last column
-plot_data$Residuals <- residuals(model)
-
-# Match short labels to the actual column names
-short_labels <- c(
-  total_net_assets = "Assets",
-  fund_age_years = "Age",
-  asset_stocks = "Stocks",
-  asset_bonds = "Bonds",
-  annual_holdings_turnover = "Turnover",
-  fund_price_earning_ratio = "P/E",
-  fund_sector_technology = "Technology",
-  fund_annual_report_net_expense_ratio = "Expense",
-  etf_indicator = "ETF",
-  "fund_annual_report_net_expense_ratio:etf_indicator" = "Expense × ETF",
-  "etf_indicator:fund_annual_report_net_expense_ratio" = "Expense × ETF",
-  Residuals = "Residuals"
-)
-
-# Keep original names if a column has no matching short label
-labels <- names(plot_data)
-matched <- labels %in% names(short_labels)
-labels[matched] <- unname(short_labels[labels[matched]])
-
-pairs(
-  plot_data,
-  labels = labels,
-  pch = 1,
-  cex = 0.3,
-  col = adjustcolor("black", alpha.f = 0.3),
-  main = "Predictors, interaction, and residuals",
-  panel = function(x, y, ...) {
-    points(x, y, ...)
-
-    # Residuals on the vertical axis: horizontal zero line
-    if (par("mfg")[1] == ncol(plot_data)) {
-      abline(h = 0, col = "red", lwd = 2)
-    }
-
-    # Residuals on the horizontal axis: vertical zero line
-    if (par("mfg")[2] == ncol(plot_data)) {
-      abline(v = 0, col = "red", lwd = 2)
-    }
-  }
-)
-```
-
-**Normal Q-Q plot:**
-
-```{r qq-plot}
-qqnorm(residuals(model), main = "Normal Q-Q plot of residuals")
-qqline(residuals(model), col = "red")
-```
-
-**Residual boxplot:** to compare the spread of errors between fund types
-
-```{r residual-boxplot}
-boxplot(residuals(model) ~ model_data$etf_indicator,
-  names = c("Mutual fund", "ETF"),
-  ylab = "Residual", xlab = "Etf Indicator",
-  main = "Residuals by fund type"
-)
-abline(h = 0, col = "red")
-```
-
-
 ```{r}
 n <- nobs(model)
 p <- model$rank
@@ -391,11 +264,6 @@ db <- dfbetas(model)
 dfits <- dffits(model)
 r <- rstudent(model)
 h <- hatvalues(model)
-```
-
-```{r}
-dfbetas(model)[cd, ]
-model.frame(model)[cd, ]
 ```
 
 ```{r}
@@ -415,15 +283,161 @@ diagnostics$flags <-
 # Number of observations flagged how many influnces it has
 table(diagnostics$flags)
 
-
 subset(diagnostics, flags == 3)
+```
+
+```{r}
+temp_model_data <- cbind(
+  position = seq_len(nobs(model)),
+  original_row = rownames(model.frame(model)),
+  model.frame(model),
+  diagnostics)
+
+write_xlsx(temp_model_data, "model_data.xlsx")
 ```
 
 ```{r}
 which(abs(dfits) > 2*sqrt((p)/n))
 which(abs(db) > 2 / sqrt(n))
-which(cd > qf(0.5, p+1, n-p-1)) 
+which(cd > qf(0.5, p, n - p))
 vif(model) # check multicolinearity
 ```
 
+```{r check-diagnostics, fig.width=10, fig.height=5}
 
+checks <- check_model(model, point_cex = 1.5)
+
+checks$diagnostics
+```
+
+## Part 2 exploratory model checks
+
+These checks use the same fitted rows as the main regression. The team's
+allocation and P/E preparation carries through to each candidate.
+
+### Return summary by fund type
+
+The summary describes the observed return distributions by fund type. It
+uses the same records as the regression and complements the histogram and
+boxplot in the existing diagnostic output.
+
+```{r part2-eda-distribution, echo=FALSE}
+p2_fitted_data <- model.frame(model)
+p2_type <- p2_group(p2_fitted_data)
+p2_ytd_pct <- 100 * p2_fitted_data$fund_return_ytd
+p2_by_type <- split(p2_ytd_pct, p2_type)
+knitr::kable(t(vapply(p2_by_type, function(y) {
+  c(n = length(y), median_return_pct = median(y), sd_return_pct = sd(y))
+}, numeric(3))), digits = 2)
+```
+
+### Standardized residuals and transformation trials
+
+Compare candidate transformations on the same records. The natural log
+compresses the asset scale. Adding 1 to the return gives positive inputs
+for the square-root, log, and Box–Cox trials. Compare standardized residual
+plots, the spread at the ends of the fitted-value range, and the lower
+tail before choosing a scale.
+
+```{r part2-eda-transforms, echo=FALSE, fig.width=10, fig.height=4.5}
+p2_residual_plots <- function(fit, label) {
+  fitted_values <- fitted(fit)
+  residual <- rstandard(fit)
+  old <- par(mfrow = c(1, 2))
+  on.exit(par(old))
+  plot(fitted_values, residual, pch = ".",
+    xlab = "Fitted response", ylab = "Standardized residual", main = label)
+  abline(h = 0, col = "grey50")
+  lines(lowess(fitted_values, residual), col = "firebrick")
+  qqnorm(residual, pch = ".")
+  qqline(residual, col = "firebrick")
+}
+
+stopifnot(all(p2_fitted_data$total_net_assets > 0),
+  all(1 + p2_fitted_data$fund_return_ytd > 0))
+p2_log_assets <- update(model,
+  . ~ . - total_net_assets + log(total_net_assets),
+  data = p2_fitted_data, na.action = na.fail)
+p2_sqrt <- update(p2_log_assets, sqrt(1 + fund_return_ytd) ~ .)
+p2_log_return <- update(p2_log_assets, log(1 + fund_return_ytd) ~ .)
+
+p2_residual_plots(model, "Original scales")
+p2_residual_plots(p2_log_assets, "Log assets")
+p2_residual_plots(p2_sqrt, "Square root of 1 + return")
+p2_residual_plots(p2_log_return, "Log of 1 + return")
+
+p2_positive <- update(p2_log_assets, I(1 + fund_return_ytd) ~ .)
+p2_profile <- MASS::boxcox(p2_positive, lambda = seq(-2, 3, 0.05),
+  plotit = FALSE, interp = FALSE)
+p2_peak <- which.max(p2_profile$y)
+p2_profile$x[p2_peak]
+range(p2_profile$x[
+  2 * (p2_profile$y[p2_peak] - p2_profile$y) <= qchisq(0.95, 1)])
+
+p2_spread <- function(fit) {
+  r <- rstandard(fit)
+  value <- fitted(fit)
+  band <- cut(value, quantile(value, 0:10 / 10), include.lowest = TRUE)
+  spread <- tapply(r, band, sd)
+  c(low_sd = unname(spread[1]), high_sd = unname(spread[10]),
+    lower_tail = unname(quantile(r, 0.01)))
+}
+knitr::kable(rbind(raw = p2_spread(model), log_assets = p2_spread(p2_log_assets),
+  sqrt_return = p2_spread(p2_sqrt), log_return = p2_spread(p2_log_return)),
+  digits = 2)
+```
+
+### Same-row P/E comparison and allocation VIFs
+
+Compare the two P/E terms jointly on the same rows. Dropping the reporting
+indicator and the centered reported value together tests their contribution
+as a block. The allocation VIFs come from regressing each allocation
+column on the other design columns. Unequal residual variance calls
+for caution in interpreting the conventional partial F test.
+
+```{r part2-eda-pe-vif, echo=FALSE}
+p2_without_pe <- update(model,
+  . ~ . - pe_reported - pe_centered_when_reported,
+  data = p2_fitted_data, na.action = na.fail)
+stopifnot(identical(rownames(model.frame(p2_without_pe)),
+  rownames(p2_fitted_data)))
+anova(p2_without_pe, model)
+
+p2_allocation_vif <- function(fit) {
+  x <- model.matrix(fit)[, -1, drop = FALSE]
+  stopifnot(fit$rank == ncol(x) + 1L)
+  names_to_check <- c("asset_stocks", "asset_bonds")
+  vapply(names_to_check, function(name) {
+    j <- match(name, colnames(x))
+    aux <- lm(x[, j] ~ x[, -j, drop = FALSE])
+    1 / (1 - summary(aux)$r.squared)
+  }, numeric(1))
+}
+knitr::kable(rbind(raw = p2_allocation_vif(model),
+  log_assets = p2_allocation_vif(p2_log_assets),
+  without_pe = p2_allocation_vif(p2_without_pe)), digits = 2)
+```
+
+### Sensitivity to the largest Cook distance
+
+Review leverage, standardized residuals, and Cook's distance using the
+course screening thresholds. Refit without the highest-Cook row to see
+how much the expense-ratio interaction changes. Use the result to describe
+sensitivity while reviewing the source of the observation.
+
+```{r part2-eda-influence, echo=FALSE}
+p2_cook <- cooks.distance(model)
+p2_largest <- which.max(p2_cook)
+p2_cook_cutoff <- qf(0.5, model$rank, df.residual(model))
+c(max_cook = max(p2_cook), cook_cutoff = p2_cook_cutoff,
+  high_leverage = sum(hatvalues(model) > 2 * model$rank / nobs(model)),
+  outlying_residual = sum(abs(rstandard(model)) > 4))
+
+p2_fitted_data[p2_largest, c("etf_indicator", "fund_return_ytd",
+  "fund_annual_report_net_expense_ratio"), drop = FALSE]
+p2_sensitivity <- lm(formula(model),
+  data = p2_fitted_data[-p2_largest, ], na.action = na.fail)
+p2_interaction <- "fund_annual_report_net_expense_ratio:etf_indicator"
+c(full = unname(coef(model)[p2_interaction]),
+  without_row = unname(coef(p2_sensitivity)[p2_interaction]))
+```
