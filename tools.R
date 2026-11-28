@@ -49,6 +49,12 @@ model_cutoffs <- function(model, cooks_cutoff = NULL) {
   )
 }
 
+# Stock and bond VIFs from the full predictor set
+allocation_vif <- function(model) {
+  car::vif(model, type = "predictor")[
+    c("asset_stocks", "asset_bonds"), "GVIF"]
+}
+
 # Build one row per fitted observation with its influence measures and flags
 influence_table <- function(model, cutoffs, db = dfbetas(model)) {
   diagnostics <- data.frame(

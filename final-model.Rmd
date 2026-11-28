@@ -270,11 +270,31 @@ lambda_ci <- range(bc$x[bc$y >= cutoff])
 c(estimate = lambda, lower = lambda_ci[1], upper = lambda_ci[2])
 ```
 
-Note about box-cox. Also potentially inconclusive aka no transformation required
+Box-Cox suggests a power near 0.65 for `1 + fund_return_ytd`, with a 95%
+range of about 0.55 to 0.70. This points away from using the original
+response scale, but we still need to refit a simple transformation and
+check its residual plots before choosing a final model.
 
-### Addressing P/E terms and asset collinearity
+### P/E terms and allocation collinearity
 
-```{r}
+```{r pe-and-vif, message=FALSE}
+# Test whether the two P/E terms help when the other predictors stay in.
+without_pe <- update(model,
+  . ~ . - pe_reported - pe_centered_when_reported,
+  data = fitted_data, na.action = na.fail)
+anova(without_pe, model)
 
-
+# Compare stock and bond VIFs across models.
+vif <- rbind(
+  original = allocation_vif(model),
+  log_assets = allocation_vif(log_assets_model),
+  without_pe = allocation_vif(without_pe)
+)
+colnames(vif) <- c("Stocks", "Bonds")
+knitr::kable(round(vif, 2))
 ```
+
+The two P/E terms improve fit in the partial F-test, although the change
+in RSS is small. The stock and bond VIFs remain near 7.4 in each model,
+so logging assets or removing P/E does not resolve their overlap. Unequal
+residual variance would weaken the usual F-test interpretation.
