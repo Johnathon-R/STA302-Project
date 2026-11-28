@@ -38,49 +38,22 @@ impute_allocation <- function(data, proportion_cols) {
   return(data)
 }
 
-# Recheck a fitted model without changing it or removing observations.
-# Usage: checks <- check_model(model)
-# After refitting: checks_revised <- check_model(model_revised)
-# Each diagnostic uses its own figure instead of a multi-panel layout.
-# In R Markdown, use fig.width=10, fig.height=6 for wide, full-size figures.
-check_model <- function(model, plots = TRUE, pairs_plot = TRUE,
-                        cooks_cutoff = NULL, max_rows = 20, point_cex = 0.8) {
-  if (!inherits(model, "lm") || inherits(model, "glm")) {
-    stop("Supply a fitted linear model from lm().")
-  }
-  if (df.residual(model) <= 1) {
-    stop("At least two residual degrees of freedom are needed.")
-  }
-  if (length(point_cex) != 1L || !is.numeric(point_cex) ||
-      !is.finite(point_cex) || point_cex <= 0) {
-    stop("point_cex must be one positive, finite number.")
-  }
-
-  # Suppress NA padding in this local copy so every output uses fitted rows.
-  # This also keeps rows aligned for models fitted with na.exclude.
-  model$na.action <- NULL
-  model_frame <- model.frame(model)
-  response <- model.response(model_frame)
-  errors <- residuals(model)
-  predictors <- model.matrix(model)
-  predictors <- predictors[, colnames(predictors) != "(Intercept)",
-    drop = FALSE
-  ]
-
+model_cutoffs <- function(model, cooks_cutoff = NULL) {
   n <- nobs(model)
   p <- model$rank
-  if (is.null(cooks_cutoff)) cooks_cutoff <- qf(0.5, p, n - p)
-  cutoffs <- c(
-    cooks = cooks_cutoff,
+
+  c(
+    cooks = if (is.null(cooks_cutoff)) qf(0.5, p, n - p) else unname(cooks_cutoff),
     dffits = 2 * sqrt(p / n),
     dfbetas = 2 / sqrt(n),
     leverage = 2 * p / n
   )
+}
 
-  db <- dfbetas(model)
+influence_table <- function(model, cutoffs, db = dfbetas(model)) {
   diagnostics <- data.frame(
-    observation = seq_len(n),
-    row_id = rownames(model_frame),
+    observation = seq_len(nobs(model)),
+    row_id = rownames(model.frame(model)),
     cooks = cooks.distance(model),
     dffits = dffits(model),
     dfbetas = apply(abs(db), 1, max),
@@ -96,156 +69,229 @@ check_model <- function(model, plots = TRUE, pairs_plot = TRUE,
   )])
   diagnostics$high_leverage <- diagnostics$leverage > cutoffs["leverage"]
 
-  # Keep the coefficient names: which(abs(db) > cutoff) alone gives matrix
-  # element indices, which are not observation numbers.
-  db_indices <- which(abs(db) > cutoffs["dfbetas"], arr.ind = TRUE)
-  dfbetas_flagged <- data.frame(
-    observation = db_indices[, "row"],
-    row_id = rownames(model_frame)[db_indices[, "row"]],
-    coefficient = colnames(db)[db_indices[, "col"]],
-    dfbeta = db[db_indices],
-    row.names = NULL
-  )
-  flagged <- diagnostics[
-    which(diagnostics$flags > 0 | diagnostics$high_leverage), , drop = FALSE
-  ]
-  flagged <- flagged[order(-flagged$flags, -flagged$cooks), , drop = FALSE]
+  diagnostics
+}
 
-  model_summary <- summary(model)
-  intervals <- confint(model)
-  partial_tests <- drop1(model, test = "F")
-  vif_result <- NULL
-  if (requireNamespace("car", quietly = TRUE)) {
-    if (anyNA(coef(model))) {
-      warning("VIF skipped: the model has aliased coefficients.")
-    } else if (length(attr(terms(model), "term.labels")) > 1) {
-      vif_result <- car::vif(model)
-    }
-  } else {
-    warning("VIF skipped: package 'car' is not installed.")
-  }
+check_model <- function(model, plots = TRUE, pairs_plot = TRUE,
+                        cooks_cutoff = NULL, max_rows = 20, point_cex = 0.8) {
+  model$na.action <- NULL
+  cutoffs <- model_cutoffs(model, cooks_cutoff)
+  db <- dfbetas(model)
+  diagnostics <- influence_table(model, cutoffs, db)
+  db_indices <- which(abs(db) > cutoffs[["dfbetas"]], arr.ind = TRUE)
+  flagged <- subset(diagnostics, flags > 0 | high_leverage)
+
+  checks <- list(
+    summary = summary(model),
+    confint = confint(model),
+    partial_tests = drop1(model, test = "F"),
+    vif = if (length(attr(terms(model), "term.labels")) > 1L &&
+              !anyNA(coef(model)) && requireNamespace("car", quietly = TRUE)) {
+      car::vif(model)
+    },
+    cutoffs = cutoffs,
+    diagnostics = diagnostics,
+    flagged = flagged[order(-flagged$flags, -flagged$cooks), , drop = FALSE],
+    dfbetas = db,
+    dfbetas_flagged = data.frame(
+      observation = db_indices[, "row"],
+      row_id = diagnostics$row_id[db_indices[, "row"]],
+      coefficient = colnames(db)[db_indices[, "col"]],
+      dfbeta = db[db_indices],
+      row.names = NULL
+    )
+  )
 
   cat("\nModel summary\n")
-  print(model_summary)
+  print(checks$summary)
   cat("\n95% confidence intervals\n")
-  print(intervals)
-  cat("\nPartial F-tests (drop1)\n")
-  print(partial_tests)
-  cat("\nVIF / GVIF\n")
-  print(vif_result)
+  print(checks$confint)
+  cat("\nPartial F-tests\n")
+  print(checks$partial_tests)
+  if (!is.null(checks$vif)) {
+    cat("\nVIF / GVIF\n")
+    print(checks$vif)
+  }
   cat("\nScreening cutoffs\n")
-  print(cutoffs)
-  cat("\nNumber of observations with 0, 1, 2, or 3 influence flags\n")
+  print(checks$cutoffs)
+  cat("\nObservations by influence flag count\n")
   print(table(factor(diagnostics$flags, levels = 0:3)))
   cat("\nHigh-leverage observations:", sum(diagnostics$high_leverage), "\n")
-  cat("\nFlagged observations (highest flag count, then Cook's distance first)\n")
-  print(head(flagged, max_rows), row.names = FALSE)
-  if (nrow(flagged) > max_rows) {
-    cat("Showing", max_rows, "of", nrow(flagged),
-        "rows; all are available in the returned $flagged table.\n")
-  }
+  cat("\nFlagged observations (showing", min(max_rows, nrow(flagged)),
+      "of", nrow(flagged), ")\n")
+  print(head(checks$flagged, max_rows), row.names = FALSE)
 
   if (plots) {
-    old_par <- par(no.readonly = TRUE)
-    on.exit(par(old_par), add = TRUE)
-    point_col <- "black"
-    short_labels <- c(
-      total_net_assets = "Assets", fund_age_years = "Age",
-      asset_stocks = "Stocks", asset_bonds = "Bonds",
-      annual_holdings_turnover = "Turnover",
-      fund_price_earning_ratio = "P/E", fund_sector_technology = "Technology",
-      pe_reported = "P/E reported", pe_centered_when_reported = "Centered P/E",
-      fund_annual_report_net_expense_ratio = "Expense", etf_indicator = "ETF",
-      "fund_annual_report_net_expense_ratio:etf_indicator" = "Expense x ETF",
-      "etf_indicator:fund_annual_report_net_expense_ratio" = "Expense x ETF",
-      Residuals = "Residuals"
-    )
-    group <- model_frame$etf_indicator
-    if (!is.null(group)) {
-      group <- factor(group, levels = c(0, 1), labels = c("Mutual fund", "ETF"))
-    }
-
-    # Give every plot the entire device, including in short R Markdown outputs.
-    # Enlarging the plotting area avoids squeezing four plots into one figure.
-    par(mfrow = c(1, 1), mar = c(4.5, 4.5, 3, 1),
-        cex = 1, cex.lab = 1, cex.axis = 0.9, cex.main = 1.05)
-    hist(response, xlab = names(model_frame)[1], main = "Distribution of returns")
-    if (!is.null(group)) {
-      boxplot(response ~ group, xlab = "Fund type", ylab = "Return",
-              main = "Returns by fund type")
+    plotter <- model_plots(model, point_cex = point_cex,
+                           diagnostics = diagnostics, cutoffs = cutoffs)
+    if (pairs_plot) {
+      plotter$show()
     } else {
-      boxplot(response, ylab = names(model_frame)[1], main = "Response boxplot")
-    }
-    plot(fitted(model), errors, xlab = "Fitted return", ylab = "Residual",
-         main = "Residuals versus fitted", pch = 1,
-         cex = point_cex, col = point_col)
-    abline(h = 0, col = "red")
-    qqnorm(errors, main = "Normal Q-Q plot of residuals", pch = 1,
-           cex = point_cex, col = point_col)
-    qqline(errors, col = "red", lwd = 2)
-
-    # Show the influence measures alongside their screening cutoffs.
-    if (!is.null(group)) {
-      boxplot(errors ~ group, xlab = "Fund type", ylab = "Residual",
-              main = "Residuals by fund type")
-    } else {
-      boxplot(errors, ylab = "Residual", main = "Residual boxplot")
-    }
-    abline(h = 0, col = "red")
-    for (measure in c("leverage", "cooks", "dffits", "dfbetas")) {
-      values <- diagnostics[[measure]]
-      cutoff <- cutoffs[measure]
-      plot(diagnostics$observation, values, type = "h",
-           col = ifelse(abs(values) > cutoff, "red", "black"),
-           xlab = "Observation in fitted model", ylab = measure,
-           main = paste("Diagnostic:", measure))
-      points(diagnostics$observation, values, pch = 1, cex = point_cex,
-             col = ifelse(abs(values) > cutoff, "red", point_col))
-      abline(h = cutoff, col = "red", lty = 2)
-      if (measure == "dffits") abline(h = -cutoff, col = "red", lty = 2)
-    }
-    plot(diagnostics$leverage, diagnostics$residuals,
-         col = ifelse(diagnostics$flags > 0, "red", point_col),
-         pch = 1, cex = point_cex,
-         xlab = "Leverage", ylab = "Studentized residual",
-         main = "Residuals versus leverage")
-    abline(h = 0, col = "red")
-    abline(v = cutoffs["leverage"], col = "red", lty = 2)
-
-    # Each predictor, including the interaction, also gets a separate figure.
-    for (predictor in colnames(predictors)) {
-      label <- if (predictor %in% names(short_labels)) short_labels[[predictor]] else predictor
-      plot(predictors[, predictor], errors, xlab = label,
-           ylab = "Residual", pch = 1, cex = point_cex, col = point_col,
-           main = "Residuals versus predictor")
-      abline(h = 0, col = "red")
-    }
-
-    if (pairs_plot && ncol(predictors) > 0) {
-      par(mfrow = c(1, 1), cex = 1)
-      plot_data <- as.data.frame(predictors)
-      plot_data$Residuals <- errors
-      labels <- names(plot_data)
-      matched <- labels %in% names(short_labels)
-      labels[matched] <- unname(short_labels[labels[matched]])
-      pairs(plot_data, labels = labels, pch = 1, cex = 0.3 * point_cex,
-            col = adjustcolor("black", alpha.f = 0.3),
-            main = "Predictors, interaction, and residuals",
-            panel = function(x, y, ...) {
-              points(x, y, ...)
-              if (par("mfg")[1] == ncol(plot_data)) {
-                abline(h = 0, col = "red", lwd = 2)
-              }
-              if (par("mfg")[2] == ncol(plot_data)) {
-                abline(v = 0, col = "red", lwd = 2)
-              }
-            })
+      plotter$show(setdiff(names(plotter), c("pairs", "show")))
     }
   }
 
-  invisible(list(
-    summary = model_summary, confint = intervals, partial_tests = partial_tests,
-    vif = vif_result, cutoffs = cutoffs, diagnostics = diagnostics,
-    flagged = flagged, dfbetas = db, dfbetas_flagged = dfbetas_flagged
-  ))
+  invisible(checks)
+}
+
+# Use model_plots(model)$show() for all plots, or call a named method directly.
+model_plots <- function(model, point_cex = 0.8,
+                        diagnostics = influence_table(model, cutoffs),
+                        cutoffs = model_cutoffs(model)) {
+  model$na.action <- NULL
+  model_frame <- model.frame(model)
+  response <- model.response(model_frame)
+  errors <- residuals(model)
+  predictors <- model.matrix(model)
+  predictors <- predictors[, colnames(predictors) != "(Intercept)", drop = FALSE]
+  group <- model_frame[["etf_indicator"]]
+  short_labels <- c(
+    total_net_assets = "Assets", fund_age_years = "Age",
+    asset_stocks = "Stocks", asset_bonds = "Bonds",
+    annual_holdings_turnover = "Turnover",
+    fund_price_earning_ratio = "P/E", fund_sector_technology = "Technology",
+    pe_reported = "P/E reported", pe_centered_when_reported = "Centered P/E",
+    fund_annual_report_net_expense_ratio = "Expense", etf_indicator = "ETF",
+    "fund_annual_report_net_expense_ratio:etf_indicator" = "Expense x ETF",
+    "etf_indicator:fund_annual_report_net_expense_ratio" = "Expense x ETF"
+  )
+
+  if (!is.null(group)) {
+    group <- factor(group, levels = c(0, 1), labels = c("Mutual fund", "ETF"))
+  }
+
+  draw <- function(code) {
+    # Changing mfrow resets mex and cex, so restore them after the layout.
+    old_par <- par(c("mfrow", "mar", "mex", "cex", "cex.lab", "cex.axis", "cex.main"))
+    on.exit(par(old_par))
+    par(mfrow = c(1, 1), mar = c(4.5, 4.5, 3, 1),
+        cex = 1, cex.lab = 1, cex.axis = 0.9, cex.main = 1.05)
+    force(code)
+  }
+
+  plot_labels <- function(columns) {
+    labels <- unname(short_labels[columns])
+    labels[is.na(labels)] <- columns[is.na(labels)]
+    labels
+  }
+
+  influence_plot <- function(measure, label, two_sided = FALSE) {
+    values <- diagnostics[[measure]]
+    cutoff <- cutoffs[[measure]]
+    limits <- if (two_sided) c(-cutoff, cutoff) else cutoff
+    colours <- ifelse(abs(values) > cutoff, "red", "black")
+
+    draw({
+      plot(diagnostics$observation, values, type = "h", col = colours,
+           ylim = range(c(values, limits, 0), finite = TRUE),
+           xlab = "Observation in fitted model", ylab = label, main = label)
+      points(diagnostics$observation, values, pch = 1, cex = point_cex,
+             col = colours)
+      abline(h = limits, col = "red", lty = 2)
+    })
+  }
+
+  histogram <- function() draw({
+    hist(response, xlab = names(model_frame)[1], main = "Response distribution")
+  })
+
+  response_boxplot <- function() draw({
+    if (is.null(group)) {
+      boxplot(response, ylab = names(model_frame)[1], main = "Response boxplot")
+    } else {
+      boxplot(response ~ group, xlab = "Fund type", ylab = names(model_frame)[1],
+              main = "Response by fund type")
+    }
+  })
+
+  residuals_vs_fitted <- function() draw({
+    plot(fitted(model), errors, xlab = "Fitted values", ylab = "Residual",
+         main = "Residuals versus fitted", pch = 1, cex = point_cex)
+    abline(h = 0, col = "red")
+  })
+
+  qq <- function() draw({
+    qqnorm(errors, main = "Normal Q-Q plot of residuals", pch = 1, cex = point_cex)
+    qqline(errors, col = "red", lwd = 2)
+  })
+
+  residual_boxplot <- function() draw({
+    if (is.null(group)) {
+      boxplot(errors, ylab = "Residual", main = "Residual boxplot")
+    } else {
+      boxplot(errors ~ group, xlab = "Fund type", ylab = "Residual",
+              main = "Residuals by fund type")
+    }
+    abline(h = 0, col = "red")
+  })
+
+  leverage <- function() influence_plot("leverage", "Leverage")
+  cooks <- function() influence_plot("cooks", "Cook's distance")
+  dffits <- function() influence_plot("dffits", "DFFITS", two_sided = TRUE)
+  dfbetas <- function() influence_plot("dfbetas", "Maximum absolute DFBETAS")
+
+  residuals_vs_leverage <- function() draw({
+    plot(diagnostics$leverage, diagnostics$residuals,
+         col = ifelse(diagnostics$flags > 0, "red", "black"),
+         pch = 1, cex = point_cex, xlab = "Leverage",
+         ylab = "Studentized residual", main = "Residuals versus leverage")
+    abline(h = 0, col = "red")
+    abline(v = cutoffs[["leverage"]], col = "red", lty = 2)
+  })
+
+  residuals_vs_predictors <- function(predictor = colnames(predictors)) {
+    for (column in predictor) {
+      draw({
+        plot(predictors[, column], errors, xlab = plot_labels(column),
+             ylab = "Residual", pch = 1, cex = point_cex,
+             main = "Residuals versus predictor")
+        abline(h = 0, col = "red")
+      })
+    }
+  }
+
+  pairs_plot <- function() {
+    if (ncol(predictors) == 0L) return(invisible(NULL))
+
+    draw({
+      graphics::pairs(cbind(predictors, Residuals = errors),
+                      labels = c(plot_labels(colnames(predictors)), "Residuals"),
+                      pch = 1, cex = 0.3 * point_cex,
+                      col = adjustcolor("black", alpha.f = 0.3),
+                      main = "Predictors and residuals",
+                      panel = function(x, y, ...) {
+                        points(x, y, ...)
+                        if (par("mfg")[1] == ncol(predictors) + 1L) {
+                          abline(h = 0, col = "red", lwd = 2)
+                        }
+                        if (par("mfg")[2] == ncol(predictors) + 1L) {
+                          abline(v = 0, col = "red", lwd = 2)
+                        }
+                      })
+    })
+  }
+
+  methods <- list(
+    histogram = histogram,
+    response_boxplot = response_boxplot,
+    residuals_vs_fitted = residuals_vs_fitted,
+    qq = qq,
+    residual_boxplot = residual_boxplot,
+    leverage = leverage,
+    cooks = cooks,
+    dffits = dffits,
+    dfbetas = dfbetas,
+    residuals_vs_leverage = residuals_vs_leverage,
+    residuals_vs_predictors = residuals_vs_predictors,
+    pairs = pairs_plot
+  )
+
+  show <- function(which = names(methods)) {
+    for (name in match.arg(which, names(methods), several.ok = TRUE)) {
+      methods[[name]]()
+    }
+    invisible(NULL)
+  }
+
+  c(methods, list(show = show))
 }
