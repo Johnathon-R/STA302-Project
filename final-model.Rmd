@@ -67,29 +67,30 @@ model_data <- model_data[complete.cases(model_data), ]
 ### Sample and missingness audit
 
 ```{r part2-eda-sample, echo=FALSE, results='asis'}
-local({
-  fund_type <- function(indicator) {
-    factor(indicator, levels = c(0, 1), labels = c("Mutual fund", "ETF"))
-  }
-  eligible_type <- fund_type(funds$etf_indicator)
-  model_type <- fund_type(model_data$etf_indicator)
-  sample_counts <- rbind(
-    "Eligible before complete-case filtering" = table(eligible_type),
-    "Main model sample" = table(model_type),
-    "P/E reported in model sample" = table(model_type[model_data$pe_reported == 1L])
-  )
-  print(knitr::kable(cbind(sample_counts, Total = rowSums(sample_counts))))
+fund_type <- function(indicator) {
+  factor(indicator, levels = c(0, 1), labels = c("Mutual fund", "ETF"))
+}
 
-  retained <- round(100 * sample_counts[2, ] / sample_counts[1, ], 1)
-  print(knitr::kable(rbind("Eligible observations retained (%)" = retained)))
+sample_counts <- rbind(
+  "Eligible before complete filtering" = table(fund_type(funds$etf_indicator)),
+  "Main model sample" = table(fund_type(model_data$etf_indicator)),
+  "P/E reported in model sample" = table(fund_type(
+    model_data$etf_indicator[model_data$pe_reported == 1L]
+  ))
+)
 
-  # Reuse the input columns, with fund age in place of the raw date.
-  missing_counts <- sapply(
-    split(funds[c(setdiff(columns, "inception_date"), "fund_age_years")], eligible_type),
-    function(group) colSums(is.na(group))
-  )
-  print(knitr::kable(missing_counts))
-})
+retained <- round(100 * sample_counts[2, ] / sample_counts[1, ], 1)
+
+# Reuse the input columns, with fund age in place of the raw date.
+missing_counts <- sapply(
+  split(funds[c(setdiff(columns, "inception_date"), "fund_age_years")], eligible_type),
+  function(group) colSums(is.na(group))
+)
+
+knitr::kable(cbind(sample_counts, Total = rowSums(sample_counts)))
+knitr::kable(rbind("Eligible observations retained (%)" = retained))
+knitr::kable(missing_counts)
+
 ```
 
 ## 2. Fit the model
