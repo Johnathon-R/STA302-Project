@@ -1,0 +1,479 @@
+---
+title: "STA302: Final Project"
+author: "Alexandros, Nikolas, Johnathon"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Prior to running any code
+
+Please download the data from
+<https://www.kaggle.com/datasets/stefanoleone992/mutual-funds-and-etfs>,
+and store the file within a data/ folder in the working directory. If
+the data is already stored then please skip this step.
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(car)
+library(writexl)
+source('tools.R')
+```
+
+## 1. Load and clean the data
+
+Read only the two fund files.
+
+```{r load-data}
+# Read in the dataset
+etfs <- read.csv("data/ETFs.csv", na.strings = c("", "NA"))
+mutualfunds <- read.csv("data/MutualFunds.csv", na.strings = c("", "NA"))
+```
+
+Keep the ytd return and the columns needed for the nine predictors.
+Blank entries are treated as missing (`NA`).
+
+```{r clean-data}
+
+#---------------------------------------------
+# 1.1. Impute missing asset allocations
+#---------------------------------------------
+
+# ETFs
+etf_asset_cols <- grep("^asset_", names(etfs), value = TRUE)
+etfs <- impute_allocation(etfs, etf_asset_cols)
+
+# Mutual funds
+mutual_fund_asset_cols <- grep("^asset_", names(mutualfunds), value = TRUE)
+mutualfunds <- impute_allocation(mutualfunds, mutual_fund_asset_cols)
+
+#---------------------------------------------
+# 1.2. Select regression columns
+#---------------------------------------------
+
+columns <- c(
+  "fund_return_ytd",
+  "fund_annual_report_net_expense_ratio",
+  "total_net_assets",
+  "inception_date",
+  "asset_stocks",
+  "asset_bonds",
+  "annual_holdings_turnover",
+  "fund_price_earning_ratio",
+  "fund_sector_technology"
+)
+
+filtered_etfs <- etfs[, columns]
+filtered_mutualfunds <- mutualfunds[, columns]
+
+
+#---------------------------------------------
+# 1.3. Combine datasets
+#---------------------------------------------
+
+filtered_etfs$etf_indicator <- 1
+filtered_mutualfunds$etf_indicator <- 0
+
+funds <- rbind(filtered_etfs, filtered_mutualfunds)
+
+
+#---------------------------------------------
+# 1.4. Fill remaining missing ETF assets with 0
+#---------------------------------------------
+
+all_assets <- grep("^asset_", names(funds), value = TRUE)
+
+# Exclude stocks and bonds
+non_etf_assets <- setdiff(
+  all_assets,
+  c("asset_stocks", "asset_bonds")
+)
+
+for (col in non_etf_assets) {
+  target_rows <- funds$etf_indicator == 1 & is.na(funds[[col]])
+  funds[target_rows, col] <- 0
+}
+
+
+#---------------------------------------------
+# 1.5. data engineering
+#---------------------------------------------
+
+# create fund age
+funds <- funds %>%
+  mutate(inception_date = as.Date(inception_date)) %>%
+  filter(inception_date < as.Date("2021-01-01"))
+
+funds$fund_age_years <- as.numeric(
+  as.Date("2021-01-01") - funds$inception_date
+) / 365.25
+
+funds$inception_date <- NULL
+
+# Represent P/E availability while retaining rows with a missing raw P/E
+pe <- funds$fund_price_earning_ratio
+pe_median <- median(pe, na.rm = TRUE)
+
+funds$pe_reported <- as.integer(!is.na(pe))
+
+funds$pe_centered_when_reported <-
+  (ifelse(is.na(pe), pe_median, pe)) - pe_median
+
+
+#---------------------------------------------
+# 1.6. Remove incomplete observations
+#---------------------------------------------
+
+colSums(is.na(funds))
+
+model_data <- funds[, !names(funds) %in% "fund_price_earning_ratio"]
+model_data <- model_data[complete.cases(model_data), ]
+
+# Compare observations before and after cleaning
+table(funds$etf_indicator)
+table(model_data$etf_indicator)
+
+```
+
+### Sample and missingness audit
+
+```{r part2-eda-sample, echo=FALSE}
+p2_group <- function(data) {
+  factor(data$etf_indicator, levels = c(0, 1),
+    labels = c("Mutual fund", "ETF"))
+}
+p2_counts <- rbind(
+  "Eligible before complete-case filtering" = table(p2_group(funds)),
+  "Main model sample" = table(p2_group(model_data)),
+  "P/E reported in model sample" = table(p2_group(
+    model_data[model_data$pe_reported == 1L, ]))
+)
+knitr::kable(cbind(p2_counts, Total = rowSums(p2_counts)))
+round(100 * p2_counts[2, ] / p2_counts[1, ], 1)
+
+p2_fields <- c("fund_return_ytd", "total_net_assets", "fund_age_years",
+  "asset_stocks", "asset_bonds", "annual_holdings_turnover",
+  "fund_price_earning_ratio", "fund_sector_technology",
+  "fund_annual_report_net_expense_ratio")
+p2_missing <- lapply(split(funds[, p2_fields], p2_group(funds)),
+  function(group) colSums(is.na(group)))
+knitr::kable(do.call(cbind, p2_missing))
+```
+
+Allocation filling uses the unit-sum rule in `tools.R`. The missingness
+table describes records after that step. The model uses a P/E reporting
+indicator and centered P/E where reported. Unequal retention by fund type
+is a reason to examine the analysis sample before generalizing.
+
+## 2. Fit the model
+
+```{r regression}
+model <- lm(fund_return_ytd ~ total_net_assets +
+    fund_age_years + asset_stocks + asset_bonds +
+    annual_holdings_turnover +
+    fund_sector_technology + pe_reported + pe_centered_when_reported + 
+    fund_annual_report_net_expense_ratio * etf_indicator,
+  data = model_data
+)
+```
+
+The ETF coefficient is the adjusted ETF–mutual fund difference at an expense
+ratio of zero. The interaction coefficient is the difference between the two
+expense-ratio slopes. This baseline uses the original return and asset scales.
+
+## 3. Summary tables and tests
+
+```{r}
+# Describe fitted model
+summary(model)
+```
+
+```{r}
+# Describe cleaned dataset including potentially unused observations
+summary(model_data)
+```
+
+```{r design-matrix}
+# Standardized third moment: positive = right skew,
+# negative = left skew. Undefined for constant columns
+skewness <- function(x) {
+  spread <- sqrt(mean((x - mean(x))^2))
+  if (spread == 0) {
+    return(NA_real_)
+  }
+  mean(((x - mean(x)) / spread)^3)
+}
+
+design_summary <- model_data %>%
+  as.data.frame() %>%
+  pivot_longer(
+    everything(),
+    names_to = "variable",
+    values_to = "value"
+  ) %>%
+  group_by(variable) %>%
+  summarise(
+    mean = mean(value),
+    median = median(value),
+    SD = sd(value),
+    min = min(value),
+    max = max(value),
+    skewness = skewness(value),
+    .groups = "drop"
+  )
+
+design_summary
+```
+
+```{r}
+# 95% confidence interval
+confint(model)
+```
+
+```{r}
+# ANOVA test
+intercept_only <- lm(fund_return_ytd ~ 1, data = model_data)
+anova(intercept_only, model)
+```
+
+```{r}
+# Test each predictor while accounting for all the others
+drop1(model, test = "F")
+```
+
+```{r}
+# The first column is the response; exclude it from predictor covariance
+covariance_matrix <- cov(model_data[, -1])
+knitr::kable(signif(covariance_matrix, 4))
+```
+
+The covariance diagonal runs from top left to bottom right and contains
+variances. Covariances depend on units, so their sizes alone do not
+measure collinearity. Four significant digits are used only to display
+the table.
+
+## 4. Graphs
+
+```{r}
+n <- nobs(model)
+p <- model$rank
+cd <- cooks.distance(model)
+db <- dfbetas(model)
+dfits <- dffits(model)
+r <- rstudent(model)
+h <- hatvalues(model)
+```
+
+```{r}
+diagnostics <- data.frame(
+  cooks = cd,
+  dffits = dfits,
+  dfbetas = apply(abs(db), 1, max),
+  residuals = r,
+  leverage = h
+)
+
+diagnostics$flags <-
+  (cd > qf(0.5, p, n-p)) +
+  (abs(dfits) > 2*sqrt(p/n)) +
+  (apply(abs(db), 1, max) > 2/sqrt(n))
+
+# Number of observations flagged how many influnces it has
+table(diagnostics$flags)
+
+subset(diagnostics, flags == 3)
+```
+
+```{r}
+temp_model_data <- cbind(
+  position = seq_len(nobs(model)),
+  original_row = rownames(model.frame(model)),
+  model.frame(model),
+  diagnostics)
+
+write_xlsx(temp_model_data, "model_data.xlsx")
+```
+
+```{r}
+which(abs(dfits) > 2*sqrt((p)/n))
+which(abs(db) > 2 / sqrt(n))
+which(cd > qf(0.5, p, n - p))
+vif(model) # check multicolinearity
+```
+
+```{r check-diagnostics, fig.width=10, fig.height=5}
+
+checks <- check_model(model, point_cex = 1.5)
+
+checks$diagnostics
+```
+
+## Part 2 exploratory model checks
+
+These checks use the same fitted rows as the main regression. The team's
+allocation and P/E preparation carries through to each candidate.
+
+### Return summary by fund type
+
+The summary describes the observed return distributions by fund type. It
+uses the same records as the regression and complements the histogram and
+boxplot in the existing diagnostic output.
+
+```{r part2-eda-distribution, echo=FALSE}
+p2_fitted_data <- model.frame(model)
+p2_type <- p2_group(p2_fitted_data)
+p2_ytd_pct <- 100 * p2_fitted_data$fund_return_ytd
+p2_by_type <- split(p2_ytd_pct, p2_type)
+knitr::kable(t(vapply(p2_by_type, function(y) {
+  c(n = length(y), median_return_pct = median(y), sd_return_pct = sd(y))
+}, numeric(3))), digits = 2)
+```
+
+### Standardized residuals and transformation trials
+
+Compare candidate transformations on the same records. The natural log
+compresses the asset scale. Adding 1 to the return gives positive inputs
+for the square-root, log, and Box–Cox trials. Compare standardized residual
+plots, the spread at the ends of the fitted-value range, and the lower
+tail before choosing a scale.
+
+```{r part2-eda-transforms, echo=FALSE, fig.width=10, fig.height=4.5}
+p2_residual_plots <- function(fit, label) {
+  fitted_values <- fitted(fit)
+  residual <- rstandard(fit)
+  old <- par(mfrow = c(1, 2))
+  on.exit(par(old))
+  plot(fitted_values, residual, pch = ".",
+    xlab = "Fitted response", ylab = "Standardized residual", main = label)
+  abline(h = 0, col = "grey50")
+  lines(lowess(fitted_values, residual), col = "firebrick")
+  qqnorm(residual, pch = ".")
+  qqline(residual, col = "firebrick")
+}
+
+stopifnot(all(p2_fitted_data$total_net_assets > 0),
+  all(1 + p2_fitted_data$fund_return_ytd > 0))
+p2_log_assets <- update(model,
+  . ~ . - total_net_assets + log(total_net_assets),
+  data = p2_fitted_data, na.action = na.fail)
+p2_sqrt <- update(p2_log_assets, sqrt(1 + fund_return_ytd) ~ .)
+p2_log_return <- update(p2_log_assets, log(1 + fund_return_ytd) ~ .)
+
+p2_residual_plots(model, "Original scales")
+p2_residual_plots(p2_log_assets, "Log assets")
+p2_residual_plots(p2_sqrt, "Square root of 1 + return")
+p2_residual_plots(p2_log_return, "Log of 1 + return")
+
+p2_positive <- update(p2_log_assets, I(1 + fund_return_ytd) ~ .)
+p2_profile <- MASS::boxcox(p2_positive, lambda = seq(-2, 3, 0.05),
+  plotit = TRUE, interp = FALSE)
+p2_peak <- which.max(p2_profile$y)
+p2_profile$x[p2_peak]
+range(p2_profile$x[
+  2 * (p2_profile$y[p2_peak] - p2_profile$y) <= qchisq(0.95, 1)])
+
+p2_spread <- function(fit) {
+  r <- rstandard(fit)
+  value <- fitted(fit)
+  band <- cut(value, quantile(value, 0:10 / 10), include.lowest = TRUE)
+  spread <- tapply(r, band, sd)
+  c(low_sd = unname(spread[1]), high_sd = unname(spread[10]),
+    lower_tail = unname(quantile(r, 0.01)))
+}
+knitr::kable(rbind(raw = p2_spread(model), log_assets = p2_spread(p2_log_assets),
+  sqrt_return = p2_spread(p2_sqrt), log_return = p2_spread(p2_log_return)),
+  digits = 2)
+```
+
+### Same-row P/E comparison and allocation VIFs
+
+Compare the two P/E terms jointly on the same rows. Dropping the reporting
+indicator and the centered reported value together tests their contribution
+as a block. The allocation VIFs come from regressing each allocation
+column on the other design columns. Unequal residual variance calls
+for caution in interpreting the conventional partial F test.
+
+```{r part2-eda-pe-vif, echo=FALSE}
+p2_without_pe <- update(model,
+  . ~ . - pe_reported - pe_centered_when_reported,
+  data = p2_fitted_data, na.action = na.fail)
+stopifnot(identical(rownames(model.frame(p2_without_pe)),
+  rownames(p2_fitted_data)))
+anova(p2_without_pe, model)
+
+p2_allocation_vif <- function(fit) {
+  x <- model.matrix(fit)[, -1, drop = FALSE]
+  stopifnot(fit$rank == ncol(x) + 1L)
+  names_to_check <- c("asset_stocks", "asset_bonds")
+  vapply(names_to_check, function(name) {
+    j <- match(name, colnames(x))
+    aux <- lm(x[, j] ~ x[, -j, drop = FALSE])
+    1 / (1 - summary(aux)$r.squared)
+  }, numeric(1))
+}
+knitr::kable(rbind(raw = p2_allocation_vif(model),
+  log_assets = p2_allocation_vif(p2_log_assets),
+  without_pe = p2_allocation_vif(p2_without_pe)), digits = 2)
+```
+
+### Sensitivity to the largest Cook distance
+
+Review leverage, standardized residuals, and Cook's distance using the
+course screening thresholds. Refit without the highest-Cook row to see
+how much the expense-ratio interaction changes. Use the result to describe
+sensitivity while reviewing the source of the observation.
+
+```{r part2-eda-influence, echo=FALSE}
+p2_cook <- cooks.distance(model)
+p2_largest <- which.max(p2_cook)
+p2_cook_cutoff <- qf(0.5, model$rank, df.residual(model))
+c(max_cook = max(p2_cook), cook_cutoff = p2_cook_cutoff,
+  high_leverage = sum(hatvalues(model) > 2 * model$rank / nobs(model)),
+  outlying_residual = sum(abs(rstandard(model)) > 4))
+
+p2_fitted_data[p2_largest, c("etf_indicator", "fund_return_ytd",
+  "fund_annual_report_net_expense_ratio"), drop = FALSE]
+p2_sensitivity <- lm(formula(model),
+  data = p2_fitted_data[-p2_largest, ], na.action = na.fail)
+p2_interaction <- "fund_annual_report_net_expense_ratio:etf_indicator"
+c(full = unname(coef(model)[p2_interaction]),
+  without_row = unname(coef(p2_sensitivity)[p2_interaction]))
+```
+
+
+```{r}
+# Box–Cox requires a positive response
+stopifnot(all(1 + model.frame(model)$fund_return_ytd > 0))
+
+# Keep the original model predictors; profile Box–Cox on 1 + return
+p2_original_positive <- update(
+  model,
+  I(1 + fund_return_ytd) ~ .,
+  data = model.frame(model),
+  na.action = na.fail
+)
+
+bc_original <- MASS::boxcox(
+  p2_original_positive,
+  lambda = seq(-2, 3, by = 0.01),
+  plotit = FALSE,
+  interp = FALSE
+)
+
+lambda_hat <- bc_original$x[which.max(bc_original$y)]
+cutoff <- max(bc_original$y) - qchisq(0.95, df = 1) / 2
+lambda_ci <- range(bc_original$x[bc_original$y >= cutoff])
+
+plot(bc_original$x, bc_original$y, type = "l",
+     xlab = expression(lambda),
+     ylab = "Profile log-likelihood",
+     main = "Box–Cox profile: original predictors")
+abline(h = cutoff, col = "red", lty = 2)
+abline(v = lambda_hat, col = "blue", lty = 2)
+
+lambda_hat
+lambda_ci
+
+```
