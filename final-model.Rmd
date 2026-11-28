@@ -79,18 +79,19 @@ sample_counts <- rbind(
   ))
 )
 
-retained <- round(100 * sample_counts[2, ] / sample_counts[1, ], 1)
+retained_pct <- round(100 * sample_counts[2, ] / sample_counts[1, ], 1)
 
-# Reuse the input columns, with fund age in place of the raw date.
+# Count missing values and count which fields cause loss.
+# Seperately for etf and mutual fund.
 missing_counts <- sapply(
-  split(funds[c(setdiff(columns, "inception_date"), "fund_age_years")], eligible_type),
+  split(funds[c(setdiff(columns, "inception_date"), "fund_age_years")],
+        eligible_type),
   function(group) colSums(is.na(group))
 )
 
 knitr::kable(cbind(sample_counts, Total = rowSums(sample_counts)))
-knitr::kable(rbind("Eligible observations retained (%)" = retained))
+knitr::kable(rbind("Eligible observations retained (%)" = retained_pct))
 knitr::kable(missing_counts)
-
 ```
 
 ## 2. Fit the model
