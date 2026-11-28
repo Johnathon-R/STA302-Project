@@ -94,6 +94,10 @@ knitr::kable(rbind("Eligible observations retained (%)" = retained_pct))
 knitr::kable(missing_counts)
 ```
 
+The complete-case sample keeps about 36% of eligible ETFs and 68% of
+eligible mutual funds. This difference limits how broadly we can apply
+the fitted ETF–mutual fund comparison.
+
 # 2. Fit the basic model
 
 ```{r regression}
@@ -183,14 +187,12 @@ where previously 0.637.
 The new model's R^2 values and RSS largely remain unchanged due to large sampling.
 
 Can we justify removing this point?
-Not entirely. This point corresponds to fund with ticker BIZD aka "American Balanced
-Fund". It exceeds all 3 cuttoffs. For this observation, we see unusually high expense
-ratio but potentially valid given the portfolios underlying composition of the
-portfolio, but this is they key factor giving it high leverage.
-
-Independently checking this point we see results match the fund profile thus it can 
-be excluded as erroneous data. It's studentized residuals are large, so the model 
-just fits its returns poorly.
+Not entirely. The raw row labels the fund BIZD and "American Balanced Fund",
+but these names belong to different funds: [BIZD is a VanEck ETF](https://www.vaneck.com/us/en/investments/bdc-income-etf-bizd/)
+and [American Balanced Fund Class A uses ABALX](https://www.capitalgroup.com/retirement/pp/participant/about/funds/details.htm?ticker=ABALX).
+This identity mismatch needs checking before we know which numerical values
+belong to the row. `model_ex` shows sensitivity to this observation; it is
+not yet a reason to remove it from the main analysis.
 
 ### What about other influential points?
 
@@ -312,7 +314,128 @@ colnames(vif) <- c("Stocks", "Bonds")
 knitr::kable(round(vif, 2))
 ```
 
-The two P/E terms improve fit in the partial F-test, although the change
+The ordinary partial F-test favours the two P/E terms, although the change
 in RSS is small. The stock and bond VIFs remain near 7.4 in each model,
-so logging assets or removing P/E does not resolve their overlap. Unequal
-residual variance would weaken the usual F-test interpretation.
+so logging assets or removing P/E does not resolve their overlap. We will
+check the P/E result again with standard errors that allow uneven spread.
+
+Stock and bond shares describe different allocation changes relative to
+other assets. We keep both for now, but their individual coefficients need
+caution because the two shares are related.
+
+### Residuals against key predictors
+
+```{r predictor-residuals, fig.width=10, fig.height=5}
+# Check the log-assets model against the focal and related predictors.
+model_plots(log_assets_model)$residuals_vs_predictors(c(
+  "fund_annual_report_net_expense_ratio", "log(total_net_assets)",
+  "asset_stocks", "asset_bonds"
+))
+```
+
+### Comparing models on the same return scale
+
+We compare the basic model, log assets, and versions without the two P/E
+terms. Each has the same response and complete-case sample. The return
+transformations are excluded because their fit criteria use another scale.
+
+```{r model-comparison}
+# Keep a test set aside while fitting these four models.
+set.seed(302)
+train_rows <- sample(seq_len(nrow(model_data)), floor(0.8 * nrow(model_data)))
+train <- model_data[train_rows, ]
+test <- model_data[-train_rows, ]
+
+candidates <- list(
+  basic = model,
+  log_assets = log_assets_model,
+  without_pe = without_pe,
+  log_assets_without_pe = update(log_assets_model,
+    . ~ . - pe_reported - pe_centered_when_reported,
+    data = fitted_data, na.action = na.fail)
+)
+train_models <- lapply(candidates, function(fit) lm(formula(fit), data = train))
+
+comparison <- data.frame(
+  model = names(train_models),
+  adjusted_r2 = sapply(train_models, function(fit) summary(fit)$adj.r.squared),
+  AIC = sapply(train_models, AIC),
+  BIC = sapply(train_models, BIC)
+)
+knitr::kable(comparison, digits = c(0, 4, 2, 2), row.names = FALSE)
+```
+
+Logging assets slightly improves fit. AIC prefers keeping the P/E terms,
+while BIC prefers removing them. We use the log-assets model with P/E as
+a working model because it keeps the adjustment terms and has the lowest
+AIC. This is not yet a final choice.
+
+### Influence in the working model
+
+```{r working-influence}
+# Repeat the Cook's distance check after changing the model.
+log_cooks <- cooks.distance(log_assets_model)
+log_influential <- which.max(log_cooks)
+c(observation = unname(log_influential),
+  cooks = unname(log_cooks[log_influential]),
+  cutoff = model_cutoffs(log_assets_model)[["cooks"]])
+
+log_assets_ex <- update(log_assets_model,
+  data = fitted_data[-log_influential, ], na.action = na.fail)
+fee_sensitivity <- rbind(
+  full = coef(log_assets_model)[fee_terms],
+  without_largest = coef(log_assets_ex)[fee_terms]
+)
+colnames(fee_sensitivity) <- c("Fee", "Fee x ETF")
+knitr::kable(round(fee_sensitivity, 3))
+```
+
+The same observation has the largest Cook's distance in the working
+model. Omitting it changes the fee-by-fund-type estimate from about 0.30
+to -2.92. We keep the full fit as the working model and treat this as a
+sensitivity result while the fund record is checked.
+
+### Checking the working model in the test set
+
+```{r coefficient-stability, message=FALSE}
+# Compare prediction error and the fee relationship across the split.
+round(c(
+  train_MSE = mean(resid(train_models$log_assets)^2),
+  test_MSE = mean((test$fund_return_ytd -
+    predict(train_models$log_assets, newdata = test))^2)
+), 6)
+
+test_model <- lm(formula(log_assets_model), data = test)
+fee_split <- rbind(
+  training = c(coef(train_models$log_assets)[fee_terms],
+    sqrt(diag(car::hccm(train_models$log_assets, type = "hc3")))[fee_terms]),
+  testing = c(coef(test_model)[fee_terms],
+    sqrt(diag(car::hccm(test_model, type = "hc3")))[fee_terms])
+)
+colnames(fee_split) <- c("Fee", "Fee x ETF", "Fee SE", "Interaction SE")
+knitr::kable(round(fee_split, 3))
+
+# Check whether stock and bond collinearity changes across the split.
+split_vif <- rbind(
+  training = allocation_vif(train_models$log_assets),
+  testing = allocation_vif(test_model)
+)
+colnames(split_vif) <- c("Stocks", "Bonds")
+knitr::kable(round(split_vif, 2))
+```
+
+```{r split-residuals, fig.width=12, fig.height=5}
+# Check whether the residual problems remain in both subsets.
+model_plots(train_models$log_assets)$residual_comparison("Training model")
+model_plots(test_model)$residual_comparison("Test model")
+```
+
+The fee-by-fund-type point estimate changes sign across the split, but
+its HC3 standard errors are large in both subsets. Neither subset gives
+a precise interaction estimate. The most influential observation is in
+the test subset and may contribute to the difference. Stock and bond
+VIFs are similar, while both residual plots still show changing spread
+and tail departures. Prediction error alone does not show that the fee
+relationship is stable.
+Since we explored the full dataset before splitting it, this is an
+internal check rather than untouched external validation.
