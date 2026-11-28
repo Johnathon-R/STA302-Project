@@ -236,7 +236,7 @@ log_return_model <- lm(
 ```
 
 ```{r}
-model_plots(model)$residual_comparizon(title = "Original model")
+model_plots(model)$residual_comparison(title = "Original model")
 model_plots(log_assets_model)$residual_comparison(title = "Log assets")
 model_plots(sqrt_return_model)$residual_comparison(title = "Square-root return and assets")
 model_plots(log_return_model)$residual_comparison(title = "Log return and assets")
