@@ -57,7 +57,7 @@ influence_table <- function(model, cutoffs, db = dfbetas(model)) {
     cooks = cooks.distance(model),
     dffits = dffits(model),
     dfbetas = apply(abs(db), 1, max),
-    residuals = rstudent(model),
+    residuals = rstandard(model),
     leverage = hatvalues(model),
     row.names = NULL
   )
@@ -148,183 +148,126 @@ check_model <- function(model, plots = TRUE,
   invisible(checks)
 }
 
-# Build a set of plots for a fitted model
-# Call plots$qq() for one plot, or plots$show() for the full set
+# Build lecture-style plots for a fitted model.
+# Call plots$qq() for one plot or plots$show() for all plots.
 model_plots <- function(model, point_cex = 0.8,
                         diagnostics = influence_table(model, cutoffs),
                         cutoffs = model_cutoffs(model)) {
   model$na.action <- NULL
-  model_frame <- model.frame(model)
-  response <- model.response(model_frame)
-  errors <- residuals(model)
-  predictors <- model.matrix(model)
-  predictors <- predictors[, colnames(predictors) != "(Intercept)", drop = FALSE]
-  group <- model_frame[["etf_indicator"]]
+  data <- model.frame(model)
+  e <- resid(model)
+  x <- model.matrix(model)
+  x <- x[, colnames(x) != "(Intercept)", drop = FALSE]
 
-  # The predictor label names on the plots
-  short_labels <- c(
-    total_net_assets = "Assets", fund_age_years = "Age",
-    asset_stocks = "Stocks", asset_bonds = "Bonds",
-    annual_holdings_turnover = "Turnover",
-    fund_price_earning_ratio = "P/E", fund_sector_technology = "Technology",
-    pe_reported = "P/E reported", pe_centered_when_reported = "Centered P/E",
-    fund_annual_report_net_expense_ratio = "Expense", etf_indicator = "ETF",
-    "fund_annual_report_net_expense_ratio:etf_indicator" = "Expense x ETF",
-    "etf_indicator:fund_annual_report_net_expense_ratio" = "Expense x ETF"
-  )
-
-  if (!is.null(group)) {
-    group <- factor(group, levels = c(0, 1), labels = c("Mutual fund", "ETF"))
+  # Use the same plot settings for direct calls and plots$show().
+  draw <- function(plot) {
+    old <- par(mfrow = c(1, 1))
+    on.exit(par(old))
+    plot()
   }
 
-  # Give each plot its own panel and restore the graphics settings afterward
-  draw <- function(code) {
-    # Setting mfrow resets spacing and text size, so restore it first
-    old_par <- par(c("mfrow", "mar", "mex",
-                     "cex", "cex.lab", "cex.axis", "cex.main"))
-    on.exit(par(old_par))
-    par(mfrow = c(1, 1), mar = c(4.5, 4.5, 3, 1),
-        cex = 1, cex.lab = 1, cex.axis = 0.9, cex.main = 1.05)
-    force(code)
+  # The horizontal axis is the fitted observation number, as in the tables.
+  influence_plot <- function(y, cutoff, title, signed = FALSE) {
+    plot(seq_along(y), y, xlab = "Observation in fitted model",
+         ylab = title, main = title, pch = 1, cex = point_cex,
+         ylim = range(c(y, cutoff, if (signed) -cutoff, 0), finite = TRUE))
+    abline(h = if (signed) c(-cutoff, cutoff) else cutoff,
+           col = "red", lty = 2)
   }
 
-  # Keep the original name for any column without a short label
-  plot_labels <- function(columns) {
-    labels <- unname(short_labels[columns])
-    labels[is.na(labels)] <- columns[is.na(labels)]
-    labels
+  histogram <- function() draw(function() {
+    hist(model.response(data), xlab = names(data)[1],
+         main = "Response distribution")
+  })
+
+  response_boxplot <- function() draw(function() {
+    if ("etf_indicator" %in% names(data)) {
+      boxplot(model.response(data) ~ factor(data$etf_indicator,
+              levels = c(0, 1), labels = c("Mutual fund", "ETF")),
+              xlab = "Fund type", ylab = names(data)[1],
+              main = "Response by fund type")
+    } else {
+      boxplot(model.response(data), ylab = names(data)[1],
+              main = "Response boxplot")
+    }
+  })
+
+  residuals_vs_fitted <- function() draw(function() {
+    plot(fitted(model), e, xlab = "Fitted values", ylab = "Residuals",
+         main = "Residuals vs fitted", pch = 1, cex = point_cex)
+    abline(h = 0, col = "red")
+  })
+
+  qq <- function() draw(function() {
+    qqnorm(e, main = "Normal Q-Q plot of residuals", pch = 1,
+           cex = point_cex)
+    qqline(e, col = "red")
+  })
+
+  residual_boxplot <- function() draw(function() {
+    if ("etf_indicator" %in% names(data)) {
+      boxplot(e ~ factor(data$etf_indicator, levels = c(0, 1),
+              labels = c("Mutual fund", "ETF")),
+              xlab = "Fund type", ylab = "Residuals",
+              main = "Residuals by fund type")
+    } else {
+      boxplot(e, ylab = "Residuals", main = "Residual boxplot")
+    }
+    abline(h = 0, col = "red")
+  })
+
+  leverage <- function() draw(function() {
+    influence_plot(diagnostics$leverage, cutoffs[["leverage"]], "Leverage")
+  })
+
+  standardized_residuals <- function() draw(function() {
+    influence_plot(diagnostics$residuals, 2, "Standardized residuals", TRUE)
+  })
+
+  cooks <- function() draw(function() {
+    influence_plot(diagnostics$cooks, cutoffs[["cooks"]],
+                   "Cook's distance")
+  })
+
+  dffits <- function() draw(function() {
+    influence_plot(diagnostics$dffits, cutoffs[["dffits"]],
+                   "DFFITS", TRUE)
+  })
+
+  # Each coefficient has its own DFBETAS, so plot each column separately.
+  dfbetas <- function() {
+    db <- stats::dfbetas(model)
+    for (i in seq_len(ncol(db))) {
+      draw(function() {
+        influence_plot(db[, i], cutoffs[["dfbetas"]],
+                       paste("DFBETAS:", colnames(db)[i]), TRUE)
+      })
+    }
   }
 
-  # Draw an influence measure and highlight observations beyond its cutoff
-  influence_plot <- function(measure, label, two_sided = FALSE) {
-    values <- diagnostics[[measure]]
-    cutoff <- cutoffs[[measure]]
-    limits <- if (two_sided) c(-cutoff, cutoff) else cutoff
-    colours <- ifelse(abs(values) > cutoff, "red", "black")
+  residuals_vs_leverage <- function() draw(function() {
+    plot(diagnostics$leverage, diagnostics$residuals,
+         xlab = "Leverage", ylab = "Standardized residuals",
+         main = "Residuals vs leverage", pch = 1, cex = point_cex)
+    abline(h = c(-2, 0, 2), col = "red", lty = c(2, 1, 2))
+    abline(v = cutoffs[["leverage"]], col = "red", lty = 2)
+  })
 
-    draw({
-      plot(diagnostics$observation, values, type = "h", col = colours,
-           ylim = range(c(values, limits, 0), finite = TRUE),
-           xlab = "Observation in fitted model", ylab = label, main = label)
-      points(diagnostics$observation, values, pch = 1, cex = point_cex,
-             col = colours)
-      abline(h = limits, col = "red", lty = 2)
-    })
-  }
-
-  # Show the distribution of the response used in the fit
-  histogram <- function() {
-    draw({
-      hist(response, xlab = names(model_frame)[1], 
-           main = "Response distribution")
-    })
-  }
-
-  # Compare the response for ETFs and mutual funds when fund type is available
-  response_boxplot <- function() {
-    draw({
-      if (is.null(group)) {
-        boxplot(response, ylab = names(model_frame)[1],
-                main = "Response boxplot")
-      } else {
-        boxplot(response ~ group,
-                xlab = "Fund type",
-                ylab = names(model_frame)[1],
-                main = "Response by fund type")
-      }
-    })
-  }
-
-  # Look for curvature or a change in spread across the fitted values
-  residuals_vs_fitted <- function() {
-    draw({
-      plot(fitted(model), errors, xlab = "Fitted values", ylab = "Residual",
-           main = "Residuals versus fitted", pch = 1, cex = point_cex)
-      abline(h = 0, col = "red")
-    })
-  }
-
-  # Compare the residual quantiles with normal quantiles
-  qq <- function() {
-    draw({
-      qqnorm(errors,
-             main = "Normal Q-Q plot of residuals",
-             pch = 1,
-             cex = point_cex)
-      qqline(errors, col = "red", lwd = 2)
-    })
-  }
-
-  # Compare the centre and spread of the residuals by fund type when available
-  residual_boxplot <- function() {
-    draw({
-      if (is.null(group)) {
-        boxplot(errors, ylab = "Residual", main = "Residual boxplot")
-      } else {
-        boxplot(errors ~ group, xlab = "Fund type", ylab = "Residual",
-                main = "Residuals by fund type")
-      }
-      abline(h = 0, col = "red")
-    })
-  }
-
-  # Find observations with unusual combinations of predictor values
-  leverage <- function() influence_plot("leverage", "Leverage")
-
-  # Show which observations have the largest overall effect on the fit
-  cooks <- function() influence_plot("cooks", "Cook's distance")
-
-  # Show how much each observation changes its own fitted value
-  dffits <- function() influence_plot("dffits", "DFFITS", two_sided = TRUE)
-
-  # Show the largest standardized coefficient change when each row is omitted
-  dfbetas <- function() influence_plot("dfbetas", "Maximum absolute DFBETAS")
-
-  # Look for observations that combine high leverage with large residuals
-  residuals_vs_leverage <- function() {
-    draw({
-      plot(diagnostics$leverage, diagnostics$residuals,
-          col = ifelse(diagnostics$flags > 0, "red", "black"),
-          pch = 1, cex = point_cex, xlab = "Leverage",
-          ylab = "Studentized residual", main = "Residuals versus leverage")
-      abline(h = 0, col = "red")
-      abline(v = cutoffs[["leverage"]], col = "red", lty = 2)
-    })
-  }
-
-  # Draw one residual plot per selected model-matrix column
-  residuals_vs_predictors <- function(predictor = colnames(predictors)) {
-    for (column in predictor) {
-      draw({
-        plot(predictors[, column], errors, xlab = plot_labels(column),
-             ylab = "Residual", pch = 1, cex = point_cex,
-             main = "Residuals versus predictor")
+  residuals_vs_predictors <- function(predictor = colnames(x)) {
+    for (name in predictor) {
+      draw(function() {
+        plot(x[, name], e, xlab = name, ylab = "Residuals",
+             main = "Residuals vs predictor", pch = 1, cex = point_cex)
         abline(h = 0, col = "red")
       })
     }
   }
 
-  # Compare predictors and residuals side by side in a scatterplot matrix
   pairs_plot <- function() {
-    if (ncol(predictors) == 0L) return(invisible(NULL))
-
-    draw({
-      graphics::pairs(cbind(predictors, Residuals = errors),
-                      labels = c(plot_labels(colnames(predictors)),
-                                 "Residuals"),
-                      pch = 1, cex = 0.3 * point_cex,
-                      col = adjustcolor("black", alpha.f = 0.3),
-                      main = "Predictors and residuals",
-                      panel = function(x, y, ...) {
-                        points(x, y, ...)
-                        # Add zero lines only on axes that show residuals
-                        if (par("mfg")[1] == ncol(predictors) + 1L) {
-                          abline(h = 0, col = "red", lwd = 2)
-                        }
-                        if (par("mfg")[2] == ncol(predictors) + 1L) {
-                          abline(v = 0, col = "red", lwd = 2)
-                        }
-                      })
+    if (ncol(x) == 0L) return(invisible(NULL))
+    draw(function() {
+      pairs(cbind(x, Residuals = e), pch = 1, cex = 0.3 * point_cex,
+            main = "Predictors and residuals")
     })
   }
 
@@ -335,6 +278,7 @@ model_plots <- function(model, point_cex = 0.8,
     qq = qq,
     residual_boxplot = residual_boxplot,
     leverage = leverage,
+    standardized_residuals = standardized_residuals,
     cooks = cooks,
     dffits = dffits,
     dfbetas = dfbetas,
@@ -343,7 +287,6 @@ model_plots <- function(model, point_cex = 0.8,
     pairs = pairs_plot
   )
 
-  # Draw the named plots in order. With no names supplied, draw them all
   show <- function(which = names(methods)) {
     for (name in match.arg(which, names(methods), several.ok = TRUE)) {
       methods[[name]]()
