@@ -151,6 +151,7 @@ check_model <- function(model, plots = TRUE,
 # Build lecture-style plots for a fitted model.
 # Call plots$qq() for one plot or plots$show() for all plots.
 # plots$presentation_plot() makes a separate four-panel figure.
+# plots$residual_comparison() pairs a standardized residual plot with a Q-Q plot.
 model_plots <- function(model, point_cex = 0.8,
                         diagnostics = influence_table(model, cutoffs),
                         cutoffs = model_cutoffs(model)) {
@@ -204,6 +205,22 @@ model_plots <- function(model, point_cex = 0.8,
            cex = point_cex)
     qqline(e, col = "red")
   })
+
+  # Use the same two panels when comparing models on different response scales.
+  residual_comparison <- function(title = "Residuals vs fitted") {
+    standardized <- rstandard(model)
+    fitted_values <- fitted(model)
+    old <- par(c("mfrow", "mex", "cex"))
+    on.exit(par(old))
+    par(mfrow = c(1, 2))
+
+    plot(fitted_values, standardized, pch = ".", main = title,
+         xlab = "Fitted response", ylab = "Standardized residual")
+    abline(h = 0, col = "grey50")
+    lines(lowess(fitted_values, standardized), col = "firebrick")
+    qqnorm(standardized, pch = ".")
+    qqline(standardized, col = "firebrick")
+  }
 
   residual_boxplot <- function() draw(function() {
     if ("etf_indicator" %in% names(data)) {
@@ -328,5 +345,6 @@ model_plots <- function(model, point_cex = 0.8,
     invisible(NULL)
   }
 
-  c(methods, list(show = show, presentation_plot = presentation_plot))
+  c(methods, list(show = show, presentation_plot = presentation_plot,
+                  residual_comparison = residual_comparison))
 }
