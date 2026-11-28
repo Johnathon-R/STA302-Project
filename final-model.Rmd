@@ -320,10 +320,13 @@ so logging assets or removing P/E does not resolve their overlap. We will
 check the P/E result again with standard errors that allow uneven spread.
 
 Stock and bond shares describe different allocation changes relative to
-other assets. We keep both for now, but their individual coefficients need
-caution because the two shares are related.
+other assets. For now we include both. Though, caution since they have 
+a correlation between one another.
 
 ### Residuals against key predictors
+
+Since we favour the log asset model we check it against other key predictors
+that are causing most of our violations or problems.
 
 ```{r predictor-residuals, fig.width=10, fig.height=5}
 # Check the log-assets model against the focal and related predictors.
@@ -335,9 +338,9 @@ model_plots(log_assets_model)$residuals_vs_predictors(c(
 
 ### Comparing models on the same return scale
 
-We compare the basic model, log assets, and versions without the two P/E
-terms. Each has the same response and complete-case sample. The return
-transformations are excluded because their fit criteria use another scale.
+Comparing the basic model, log assets, and versions without the two P/E
+terms. The return transformations are excluded because their fit criteria 
+use a different scale.
 
 ```{r model-comparison}
 # Keep a test set aside while fitting these four models.
@@ -365,10 +368,10 @@ comparison <- data.frame(
 knitr::kable(comparison, digits = c(0, 4, 2, 2), row.names = FALSE)
 ```
 
-Logging assets slightly improves fit. AIC prefers keeping the P/E terms,
-while BIC prefers removing them. We use the log-assets model with P/E as
-a working model because it keeps the adjustment terms and has the lowest
-AIC. This is not yet a final choice.
+Logging assets very very slightly improves fit. AIC prefers keeping 
+the P/E terms, while BIC prefers removing them. Going forward we intend 
+to use the log-assets model with P/E as a working model because it keeps 
+the adjustment terms and has the lowest AIC. This is not yet a final choice.
 
 ### Influence in the working model
 
@@ -390,10 +393,10 @@ colnames(fee_sensitivity) <- c("Fee", "Fee x ETF")
 knitr::kable(round(fee_sensitivity, 3))
 ```
 
-The same observation has the largest Cook's distance in the working
-model. Omitting it changes the fee-by-fund-type estimate from about 0.30
-to -2.92. We keep the full fit as the working model and treat this as a
-sensitivity result while the fund record is checked.
+The same problematic observation has the largest Cook's distance in 
+the current working model. Omitting it changes the fee-by-fund-type 
+estimate from about 0.30 to -2.92, similar to before. Keeping the full 
+fit as the working model and treating this as a sensitivity result.
 
 ### Checking the working model in the test set
 
@@ -430,12 +433,13 @@ model_plots(train_models$log_assets)$residual_comparison("Training model")
 model_plots(test_model)$residual_comparison("Test model")
 ```
 
-The fee-by-fund-type point estimate changes sign across the split, but
-its HC3 standard errors are large in both subsets. Neither subset gives
-a precise interaction estimate. The most influential observation is in
-the test subset and may contribute to the difference. Stock and bond
-VIFs are similar, while both residual plots still show changing spread
-and tail departures. Prediction error alone does not show that the fee
-relationship is stable.
-Since we explored the full dataset before splitting it, this is an
-internal check rather than untouched external validation.
+The fee-by-fund-type point estimate changes sign across the split.
+Neither subset gives a precise interaction estimate. The most 
+influential observation is in the test subset and may contribute to the 
+difference. 
+
+Stock and bond VIFs are similar, while both residual plots still show 
+changing spread and tail departures. Prediction error alone does not show 
+that the fee relationship is stable. Since we explored the full dataset 
+before splitting it, this is an internal check rather than external 
+validation.
