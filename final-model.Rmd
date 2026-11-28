@@ -114,18 +114,20 @@ fitted_data <- model.frame(model) # Extracting rows-variables used by lm()
 summary(model)
 
 # Describe cleaned dataset including potentially unused observations
-summary(model_data)
+#summary(model_data)
 
 # 95% confidence interval
-confint(model)
+#confint(model)
 
 # Test each predictor while accounting for all the others
-drop1(model, test = "F")
+#drop1(model, test = "F")
 
 # ANOVA test
-intercept_only <- lm(fund_return_ytd ~ 1, data = model_data)
-anova(intercept_only, model)
+#intercept_only <- lm(fund_return_ytd ~ 1, data = model_data)
+#anova(intercept_only, model)
+```
 
+```{r}
 # The first column is the response; exclude it from predictor covariance
 covariance_matrix <- cov(model_data[, -1])
 knitr::kable(signif(covariance_matrix, 4))
@@ -170,3 +172,38 @@ most_influential <- which.max(checks$diagnostics$cooks)
 model_ex <- lm(formula = formula(model), data = model_data[-most_influential, ])
 summary(model_ex)
 ```
+
+The most influential point by cooks distance of 2.55 above course cutoff of 0.95.
+Removing that observation changes the interaction term (fee x fund type) coefficient
+from approximatedly 0.27 to -2.84. It also becomes significant with p-value of 0.004
+where previously 0.637.
+
+The new model's R^2 values and RSS largely remain unchanged due to large sampling.
+
+Can we justify removing this point?
+Not entirely. This point corresponds to fund with ticker BIZD aka "American Balanced
+Fund". It exceeds all 3 cuttoffs. For this observation, we see unusually high expense
+ratio but potentially valid given the portfolios underlying composition of the
+portfolio, but this is they key factor giving it high leverage.
+
+Independently checking this point we see results match the fund profile thus it can 
+be excluded as erroneous data. It's studentized residuals are large, so the model 
+just fits its returns poorly.
+
+### What about other influential points?
+
+Checking commonly flagged observations for exceeding cutoffs, several points exceeded
+2 cutoffs and even more exceeded 1. ETFs were more commonly flagged at a 56% rate 
+compared to 16% of mutual funds. Most flagged points were funds categoriezed into:
+- Equity precious metal
+- Real estate
+- Energy
+- Leveraged Equities
+- Chinese regional funds
+
+Broadly speaking, each type of fund either outperformed or underperformed due to
+underlying market conditions. Keep in mind year 2021 was post-covid recovery.
+* Leveraged assets should always performed unexpectedly due to their nature.
+* Oil demand recovered faster than supply after economy opened up pushing higher prices.
+* Rising rates and precious metals were correlated.
+
