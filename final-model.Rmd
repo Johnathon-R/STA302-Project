@@ -7,7 +7,7 @@ editor_options:
     wrap: 72
 ---
 
-# Prior to running any code
+## Prior to running any code
 
 Please download the data from
 <https://www.kaggle.com/datasets/stefanoleone992/mutual-funds-and-etfs>,
@@ -22,7 +22,7 @@ library(writexl)
 source('tools.R')
 ```
 
-## 1. Load and clean the data
+# 1. Load and clean the data
 
 ```{r clean-data}
 columns <- c(
@@ -64,7 +64,7 @@ model_data <- select(funds, -fund_price_earning_ratio)
 model_data <- model_data[complete.cases(model_data), ]
 ```
 
-### Sample and missingness audit
+## Sample and missingness audit
 
 ```{r part2-eda-sample, echo=FALSE, results='asis'}
 fund_type <- function(indicator) {
@@ -94,7 +94,7 @@ knitr::kable(rbind("Eligible observations retained (%)" = retained_pct))
 knitr::kable(missing_counts)
 ```
 
-## 2. Fit the basic model
+# 2. Fit the basic model
 
 ```{r regression}
 model <- lm(fund_return_ytd ~ total_net_assets +
@@ -107,7 +107,7 @@ model <- lm(fund_return_ytd ~ total_net_assets +
 fitted_data <- model.frame(model) # Extracting rows-variables used by lm()
 ```
 
-## 3. Summary tables
+# 3. Summary tables
 
 ```{r}
 # Describe fitted model
@@ -133,7 +133,7 @@ covariance_matrix <- cov(model_data[, -1])
 knitr::kable(signif(covariance_matrix, 4))
 ```
 
-## 4. Plots and model diagnostics
+# 4. Plots and model diagnostics
 ```{r, fig.width=12, fig.height=8}
 checks <- check_model(model, plots = FALSE)
 check_plots <- model_plots(model, point_cex = 0.8,
@@ -163,15 +163,17 @@ data. Use for interperting model results and problematic points.
 #write.csv(diagnostic_data, "model_data_diagnostics.csv", row.names = FALSE)
 ```
 
-## 4. Exploratory checks
+# 5. Exploratory checks
 
-### Removing most influential fund from model
+## Removing most influential fund from model
 
-```{r cook-sensitivity}
+```{r}
 most_influential <- which.max(checks$diagnostics$cooks)
 model_ex <- lm(formula = formula(model), data = model_data[-most_influential, ])
 summary(model_ex)
 ```
+
+### Explanation
 
 The most influential point by cooks distance of 2.55 above course cutoff of 0.95.
 Removing that observation changes the interaction term (fee x fund type) coefficient
@@ -207,3 +209,35 @@ underlying market conditions. Keep in mind year 2021 was post-covid recovery.
 * Oil demand recovered faster than supply after economy opened up pushing higher prices.
 * Rising rates and precious metals were correlated.
 
+## Verifying assumptions
+
+### Trial transformations
+
+Using the **same observations**, we refit the model using appropriate transformations.
+
+```{r fig.width=12, fig.height=5}
+log_assets_model <- lm(
+  fund_return_ytd ~ . - total_net_assets + log(total_net_assets) +
+    fund_annual_report_net_expense_ratio:etf_indicator,
+  data = model_data, na.action = na.fail
+)
+
+sqrt_return_model <- lm(
+  sqrt(1 + fund_return_ytd) ~ . - total_net_assets + sqrt(total_net_assets) +
+    fund_annual_report_net_expense_ratio:etf_indicator,
+  data = model_data, na.action = na.fail
+)
+
+log_return_model <- lm(
+  log(1 + fund_return_ytd) ~ . - total_net_assets + log(total_net_assets) +
+    fund_annual_report_net_expense_ratio:etf_indicator,
+  data = model_data, na.action = na.fail
+)
+```
+
+```{r}
+model_plots(model)$residual_comparizon(title = "Original model")
+model_plots(log_assets_model)$residual_comparison(title = "Log assets")
+model_plots(sqrt_return_model)$residual_comparison(title = "Square-root return and assets")
+model_plots(log_return_model)$residual_comparison(title = "Log return and assets")
+```
