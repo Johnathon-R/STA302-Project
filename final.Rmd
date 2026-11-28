@@ -98,10 +98,11 @@ local({
 model <- lm(fund_return_ytd ~ total_net_assets +
     fund_age_years + asset_stocks + asset_bonds +
     annual_holdings_turnover +
-    fund_sector_technology + pe_reported + pe_centered_when_reported + 
+    fund_sector_technology + pe_reported + pe_centered_when_reported +
     fund_annual_report_net_expense_ratio * etf_indicator,
   data = model_data
 )
+fitted_data <- model.frame(model)
 ```
 
 ## 3. Summary tables
@@ -133,9 +134,10 @@ knitr::kable(signif(covariance_matrix, 4))
 ```{r}
 plots <- model_plots(model, point_cex = 1.5)
 
-plots$qq()                                 # One plot
-plots$show(c("qq", "residuals_vs_fitted"))  # Selected plots
-plots$show()
+#plots$qq()                                 # One plot
+#plots$show(c("qq", "residuals_vs_fitted"))  # Selected plots
+#plots$show() # All plots
+plots$presentation_plot()
 ```
 
 ```{r}
